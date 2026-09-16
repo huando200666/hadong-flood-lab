@@ -22,22 +22,13 @@ const RISK_LABELS = {
   very_high: 'Rất cao'
 };
 
-// Detect base path for GitHub Pages (e.g. /hadong-flood-lab/) vs local (/)
-function basePath() {
-  const p = location.pathname;
-  // If running from a subdirectory like /hadong-flood-lab/
-  const match = p.match(/^(\/[^/]+\/)/);
-  if (match && !p.endsWith('.html') && p !== '/') return match[1];
-  if (p.includes('/hadong-flood-lab')) return '/hadong-flood-lab/';
-  return '/';
-}
-
 export async function loadGisData() {
   if (_sitesCache && _layersCache) return { sites: _sitesCache, layers: _layersCache };
-  const base = basePath();
+  const sitesUrl = new URL('./data/sites.geojson', import.meta.url).href;
+  const layersUrl = new URL('./data/gis-layers.geojson', import.meta.url).href;
   const [sitesRes, layersRes] = await Promise.all([
-    fetch(base + 'data/sites.geojson'),
-    fetch(base + 'data/gis-layers.geojson')
+    fetch(sitesUrl),
+    fetch(layersUrl)
   ]);
   _sitesCache = await sitesRes.json();
   _layersCache = await layersRes.json();
@@ -54,7 +45,8 @@ export async function loadReports() {
 
   // First load: seed from static JSON
   try {
-    const res = await fetch(basePath() + 'data/community-reports.json');
+    const repUrl = new URL('./data/community-reports.json', import.meta.url).href;
+    const res = await fetch(repUrl);
     _reportsCache = await res.json();
     localStorage.setItem('hadong-community-reports', JSON.stringify(_reportsCache));
   } catch {

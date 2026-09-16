@@ -1,5 +1,21 @@
 [
   {
+    "id": "rep-mu3v6hnt",
+    "reporter_name": "Test Citizen",
+    "location_name": "Đường Quang Trung",
+    "coordinates": [
+      105.78,
+      20.97
+    ],
+    "depth_level": "medium",
+    "depth_cm": 28,
+    "photo_url": "",
+    "description": "Ngập nhẹ lối vào ga",
+    "reported_at": "2026-09-16T08:54:09.642Z",
+    "status": "verified",
+    "votes": 1
+  },
+  {
     "id": "rep-mu3tn61o",
     "reporter_name": "Test Citizen",
     "location_name": "Đường Quang Trung",
