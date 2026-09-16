@@ -49,3 +49,9 @@ Mưa đại diện một ô mô hình không đủ phân giải để phân bi�
 `public/`: giao diện và logic; `server.mjs`: máy chủ/API; `data/`: GeoJSON tham chiếu và nguồn; `scripts/`: tải dữ liệu; `ml/`: huấn luyện; `tests/`: kiểm tra logic thiếu dữ liệu, múi giờ và cửa sổ mưa.
 
 Nguồn xem `data/sources.json`. Ghi công OpenStreetMap contributors và Open-Meteo trên web. Tuân thủ điều khoản nhà cung cấp khi triển khai rộng; không tải hàng loạt tile OSM. Đây là công cụ nghiên cứu, không thay thế thông báo của cơ quan chức năng.
+
+## Cập nhật trải nghiệm dự báo
+
+Chọn biểu đồ 6/12/24 giờ, xem tổng mưa và giờ mưa lớn nhất, xuất CSV theo khoảng đang chọn, in/lưu PDF bằng trình duyệt. Có thể nạp giờ mưa dự báo lớn nhất vào kịch bản thử nghiệm; chỉ số vẫn chưa phải mô hình AI đã kiểm định. Dữ liệu tự cập nhật mỗi 15 phút khi tab đang hiển thị. API dùng chung một yêu cầu nguồn cho các lượt truy cập đồng thời.
+
+Chạy toàn bộ kiểm tra: `node --test tests/*.test.mjs`.

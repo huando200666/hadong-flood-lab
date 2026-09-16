@@ -5,7 +5,7 @@ Sau khi triển khai thành công, website chạy trên máy chủ Render. Máy 
 ## Cách triển khai
 
 1. Đăng nhập GitHub và tạo repository cho đề tài. Có thể để repository private.
-2. Đưa `public/`, `data/sites.geojson`, `data/sources.json`, `server.mjs`, `package.json`, `render.yaml` lên repository, giữ nguyên cấu trúc thư mục. Đây là các tệp cần cho web; không cần tải dữ liệu khảo sát cá nhân hoặc thông tin đăng nhập.
+2. Đưa `public/`, `data/sites.geojson`, `data/sources.json`, `server.mjs`, `weather-cache.mjs`, `package.json`, `render.yaml` lên repository, giữ nguyên cấu trúc thư mục. Đây là các tệp cần cho web; không cần tải dữ liệu khảo sát cá nhân hoặc thông tin đăng nhập.
 3. Đăng nhập https://dashboard.render.com, chọn **New → Blueprint**, kết nối repository vừa tạo. Render đọc cấu hình `render.yaml`.
 4. Kiểm tra dịch vụ `hadong-flood-lab`, gói **Free**, rồi triển khai. Nếu tạo **Web Service** thủ công: Runtime Node; Build Command `node --check server.mjs`; Start Command `node server.mjs`; biến môi trường `HOST=0.0.0.0`, `NODE_VERSION=24`.
 5. Chờ trạng thái **Live** và mở đường dẫn HTTPS Render cấp. Chỉ đường dẫn được cấp sau khi triển khai mới là địa chỉ web thực tế.

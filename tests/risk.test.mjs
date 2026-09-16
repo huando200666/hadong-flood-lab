@@ -20,3 +20,5 @@ test('future windows interpreted in UTC+7 regardless of server timezone',()=>{
   const result=futureHours(data,Date.parse('2026-09-16T00:30:00Z'));
   assert.equal(result.length,2);assert.equal(result[0].time,'2026-09-16T08:00');assert.equal(result[1].rain3h,6);
 });
+
+test('invalid rainfall remains missing in forecast display',()=>{const data={hourly:{time:['2026-09-16T09:00'],precipitation:[-1]}};assert.equal(futureHours(data,Date.parse('2026-09-16T00:00:00Z'))[0].rain,null);});
