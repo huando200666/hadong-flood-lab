@@ -136,7 +136,8 @@ main {
   margin-left: 260px;
   flex: 1;
   padding: 0 32px 60px;
-  background: #f8faf9;
+  background: linear-gradient(180deg, rgba(248, 250, 249, 0.88) 0%, rgba(248, 250, 249, 0.96) 500px, #f8faf9 100%),
+              url('./background.png') top center / 100% auto no-repeat fixed;
   min-width: 0;
 }
 
@@ -147,13 +148,13 @@ main {
   justify-content: space-between;
   gap: 16px;
   padding: 12px 20px;
-  margin: 16px 0 12px;
-  border-radius: 10px;
+  margin: 16px 0 16px;
+  border-radius: 12px;
   font-size: 13px;
   background: var(--warning-bg);
   border: 1px solid var(--warning-border);
   color: #9a3412;
-  box-shadow: 0 2px 6px rgba(234, 88, 12, 0.08);
+  box-shadow: 0 4px 12px rgba(234, 88, 12, 0.08);
 }
 .top-alert-ticker.danger {
   background: var(--danger-bg);
@@ -174,30 +175,67 @@ main {
 .alert-message { flex: 1; font-weight: 600; line-height: 1.4; }
 .alert-actions { display: flex; gap: 8px; align-items: center; }
 
-/* HEADER */
+/* HEADER HERO BANNER VỚI ẢNH NỀN HÀ ĐÔNG */
 header {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 20px 0;
-  border-bottom: 1px solid var(--line);
+  padding: 36px 36px;
+  border-radius: 16px;
+  border: 1px solid rgba(22, 100, 81, 0.2);
   margin-bottom: 24px;
+  background: linear-gradient(105deg, rgba(16, 62, 57, 0.92) 0%, rgba(22, 100, 81, 0.82) 45%, rgba(255, 255, 255, 0.2) 100%),
+              url('./background.png') center right / cover no-repeat;
+  color: #ffffff;
+  box-shadow: 0 10px 25px -5px rgba(16, 62, 57, 0.22);
+  overflow: hidden;
+}
+header::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at top right, rgba(255, 255, 255, 0.25) 0%, transparent 60%);
+  pointer-events: none;
 }
 header h1 {
-  font-size: 24px;
-  font-weight: 750;
+  font-size: 26px;
+  font-weight: 800;
   letter-spacing: -0.5px;
-  color: #0f172a;
-  margin: 4px 0 0;
+  color: #ffffff;
+  margin: 6px 0 0;
+  text-shadow: 0 2px 5px rgba(0, 0, 0, 0.35);
+  position: relative;
+  z-index: 1;
 }
-.eyebrow {
-  font-size: 10px;
-  letter-spacing: 1.5px;
-  font-weight: 700;
-  color: var(--muted);
+header .eyebrow {
+  font-size: 11px;
+  letter-spacing: 2px;
+  font-weight: 800;
+  color: #a7f3d0;
   text-transform: uppercase;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+  position: relative;
+  z-index: 1;
 }
-.header-actions { display: flex; align-items: center; gap: 10px; }
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  position: relative;
+  z-index: 2;
+}
+.header-actions button {
+  background: rgba(255, 255, 255, 0.95);
+  color: #103e39;
+  border: none;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  font-weight: 700;
+}
+.header-actions button:hover {
+  background: #ffffff;
+  transform: translateY(-1px);
+}
 .pill {
   font-size: 11px;
   padding: 6px 12px;
