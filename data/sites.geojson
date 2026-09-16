@@ -1,0 +1,9 @@
+{
+  "type": "FeatureCollection",
+  "metadata": {"status":"approximate_reference_locations", "note":"Tọa độ tham chiếu do người phát triển chọn để hiển thị tên khu vực; không phải vị trí hộ bị ngập, trạm đo hay ranh giới hành chính. Cần xác minh thực địa.", "source":"https://hadong.hanoi.gov.vn/van-hoa-xa-hoi/ha-noi-kip-thoi-di-tan-nguoi-dan-ven-song-nhue-khac-phuc-ngap-ung-sau-bao-so-10-2809251007162437752.htm"},
+  "features": [
+    {"type":"Feature","geometry":{"type":"Point","coordinates":[105.7905,20.9635]},"properties":{"id":"phuc-la","name":"Khu vực Phúc La","note":"Bài viết của phường ghi nhận di tản 1 hộ tại tổ dân phố 2 Phúc La. Vị trí trên bản đồ chỉ mang tính tham chiếu."}},
+    {"type":"Feature","geometry":{"type":"Point","coordinates":[105.7708,20.9678]},"properties":{"id":"quang-trung","name":"Khu vực Quang Trung","note":"Bài viết của phường ghi nhận di tản 5 hộ tại tổ dân phố 11N Quang Trung. Chưa có tọa độ và độ sâu ngập."}},
+    {"type":"Feature","geometry":{"type":"Point","coordinates":[105.7892,20.9842]},"properties":{"id":"mo-lao","name":"Khu vực Mộ Lao","note":"Bài viết của phường ghi nhận di tản 7 hộ tại khu vực Mộ Lao. Chưa có chuỗi quan trắc ngập."}}
+  ]
+}
