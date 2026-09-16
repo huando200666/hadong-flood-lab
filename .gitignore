@@ -3,3 +3,6 @@ node_modules/
 __pycache__/
 ml/artifacts/
 *.log
+
+data/private/
+data/observations*.csv

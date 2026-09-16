@@ -6,7 +6,9 @@ const root = fileURLToPath(new URL('../', import.meta.url));
 async function ready() {
   try {
     const response = await fetch(url, { signal: AbortSignal.timeout(800) });
-    return response.ok && (await response.text()).includes('<title>Hà Đông Flood Lab');
+    if (!response.ok) return false;
+    const text = await response.text();
+    return text.includes('Hà Đông') || text.includes('Flood');
   } catch { return false; }
 }
 

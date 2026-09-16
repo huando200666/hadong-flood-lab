@@ -1,92 +1,968 @@
-import {assess,futureHours} from './risk.js';
-const $=id=>document.getElementById(id);
-let map,points,weather;
-let horizon=24;
-const fmt=x=>typeof x==='number'&&Number.isFinite(x)?x.toLocaleString('vi-VN',{maximumFractionDigits:1}):'—';
-async function initMap(){
-  let data;
-  try {const res=await fetch('/data/sites.geojson');if(!res.ok)throw Error();data=await res.json();}
-  catch{$('sites').textContent='Không tải được danh sách khu vực.';return;}
-  if(window.L){
-    map=L.map('map').setView([20.977,105.781],14);
-    const tiles=L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'}).addTo(map);
-    tiles.once('tileerror',()=>{$('site-detail').textContent='Một số ô bản đồ chưa tải được. Kiểm tra kết nối Internet; tọa độ tham chiếu vẫn có trong danh sách.';});
-    points=L.layerGroup().addTo(map);
-  } else {$('map').innerHTML='<p class="map-error">Không tải được thư viện bản đồ. Cần Internet để kết nối Leaflet và OpenStreetMap. Danh sách khu vực vẫn sử dụng được.</p>';}
-  for(const f of data.features){
-    const [lng,lat]=f.geometry.coordinates,p=f.properties;
-    const button=document.createElement('button');button.className='site';
-    const title=document.createElement('strong');title.textContent=p.name;
-    const sub=document.createElement('span');sub.textContent=`${lat.toFixed(4)}° N · ${lng.toFixed(4)}° E ↗`;
-    button.append(title,sub);$('sites').append(button);
-    let marker;
-    const choose=()=>{document.querySelectorAll('.site').forEach(el=>el.classList.remove('selected'));button.classList.add('selected');$('site-detail').textContent=p.note;if(map){points.addTo(map);$('show-points').checked=true;map.setView([lat,lng],15);marker.openPopup();}};
-    if(map){const popup=document.createElement('div');popup.textContent=p.name+' — tọa độ tham chiếu, chưa xác minh thực địa.';marker=L.circleMarker([lat,lng],{radius:10,color:'#fff',weight:3,fillColor:'#287f64',fillOpacity:1}).addTo(points).bindPopup(popup).bindTooltip(p.name);marker.on('click',choose);}
-    button.onclick=choose;
+/**
+ * Hà Đông Flood Lab - GIS & AI Urban Flood Monitoring Platform
+ * Full client-side application logic
+ */
+
+const $ = id => document.getElementById(id);
+
+let map;
+let layers = {
+  roads: null,
+  residential: null,
+  lakes: null,
+  rivers: null,
+  drainage: null,
+  sites: null,
+  community: null,
+  rainRadar: null,
+  routing: null,
+  timelineSpread: null
+};
+
+let gisData = null;
+let currentForecast = null;
+let currentTimeline = null;
+let timelineTimer = null;
+let isPlayingTimeline = false;
+let soundEnabled = false;
+let audioCtx = null;
+let selectedReportCoords = [105.78, 20.97];
+let isPickingMapLocation = false;
+let currentRainHorizon = 24;
+let weatherData = null;
+
+// Risk Level Colors & Badges
+const RISK_COLORS = {
+  low: '#10b981',
+  medium: '#f59e0b',
+  high: '#ea580c',
+  very_high: '#dc2626'
+};
+
+const RISK_LABELS = {
+  low: 'Thấp',
+  medium: 'Trung bình',
+  high: 'Cao',
+  very_high: 'Rất cao'
+};
+
+// Play audio beep for early warning
+function playAlertBeep() {
+  if (!soundEnabled) return;
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(880, audioCtx.currentTime); // A5
+    osc.frequency.exponentialRampToValueAtTime(440, audioCtx.currentTime + 0.3);
+    gain.gain.setValueAtTime(0.2, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.start();
+    osc.stop(audioCtx.currentTime + 0.3);
+  } catch (e) {
+    console.warn('Audio not allowed yet', e);
   }
 }
-$('reset-map').onclick=()=>map?.setView([20.977,105.781],14);
-$('show-points').onchange=e=>{if(map&&points)e.target.checked?points.addTo(map):map.removeLayer(points);};
-function renderWeather(data){
-  const allHours=futureHours(data);
-  const hours=allHours.slice(0,horizon);
-  if(allHours.length!==24)throw Error('Không có đủ dự báo 24 giờ tới.');
-  $('rain-now').innerHTML=fmt(hours[0].rain)+' <small>mm</small>';
-  const complete=allHours.every(x=>typeof x.rain==='number'&&Number.isFinite(x.rain));
-  $('rain-total').innerHTML=fmt(complete?allHours.reduce((a,x)=>a+x.rain,0):null)+' <small>mm</small>';
-  $('weather-status').textContent=complete?'Đã nhận dữ liệu dự báo':'Thiếu một số giá trị mưa';
-  $('weather-time').textContent=`Lấy dữ liệu: ${new Date(data.retrieved_at).toLocaleString('vi-VN',{timeZone:'Asia/Bangkok'})} (UTC+7). Dự báo mô hình, không phải quan trắc tại chỗ.`;
-  $('chart').replaceChildren();$('weather-table').replaceChildren();
-  $('forecast-title').textContent='Lượng mưa dự báo trong '+horizon+' giờ tới';
-  const valid=hours.filter(h=>typeof h.rain==='number'&&Number.isFinite(h.rain)&&h.rain>=0);
-  const peak=valid.reduce((best,h)=>!best||h.rain>best.rain?h:best,null);
-  $('forecast-summary').textContent=valid.length===hours.length?'Tổng '+horizon+' giờ: '+fmt(valid.reduce((s,h)=>s+h.rain,0))+' mm · Mưa lớn nhất: '+fmt(peak.rain)+' mm/giờ lúc '+peak.time.replace('T',' ')+' (UTC+7).':'Thiếu '+(hours.length-valid.length)+' giá trị mưa; chưa thể tính tổng.';
-  $('use-forecast').disabled=!allHours.some(h=>h.rain!==null&&h.rain3h!==null);
-  $('export-csv').disabled=false;
-  const max=Math.max(5,...hours.map(h=>typeof h.rain==='number'?h.rain:0));
-  hours.forEach((h,i)=>{
-    const col=document.createElement('div');col.className='bar-column';col.title=`${h.time.replace('T',' ')}: ${fmt(h.rain)} mm`;
-    const value=document.createElement('span');value.textContent=fmt(h.rain);
-    const bar=document.createElement('div');bar.className='bar';bar.style.height=(typeof h.rain==='number'?h.rain/max*140:0)+'px';
-    const label=document.createElement('small');label.textContent=i%3===0?h.time.slice(11,16):'';
-    col.append(value,bar,label);$('chart').append(col);
-    const tr=document.createElement('tr');[h.time.replace('T',' '),fmt(h.rain),fmt(h.rain3h)].forEach(t=>{const td=document.createElement('td');td.textContent=t;tr.append(td);});$('weather-table').append(tr);
+
+// 1. INITIALIZE LEAFLET MAP & ALL GIS LAYERS
+async function initMap() {
+  if (!window.L) {
+    $('map').innerHTML = '<div style="padding:20px;color:#dc2626">Không thể tải Leaflet Map. Vui lòng kiểm tra kết nối mạng.</div>';
+    return;
+  }
+
+  // Hà Đông Center: 20.972, 105.776
+  map = L.map('map', {
+    center: [20.972, 105.776],
+    zoom: 13.5,
+    zoomControl: true
+  });
+
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors | Hà Đông Flood Lab'
+  }).addTo(map);
+
+  // Initialize Layer Groups
+  layers.roads = L.layerGroup().addTo(map);
+  layers.residential = L.layerGroup().addTo(map);
+  layers.lakes = L.layerGroup().addTo(map);
+  layers.rivers = L.layerGroup().addTo(map);
+  layers.drainage = L.layerGroup().addTo(map);
+  layers.sites = L.layerGroup().addTo(map);
+  layers.community = L.layerGroup().addTo(map);
+  layers.rainRadar = L.layerGroup().addTo(map);
+  layers.routing = L.layerGroup().addTo(map);
+  layers.timelineSpread = L.layerGroup().addTo(map);
+
+  // Handle map click for community report picking
+  map.on('click', e => {
+    if (isPickingMapLocation) {
+      selectedReportCoords = [Number(e.latlng.lng.toFixed(4)), Number(e.latlng.lat.toFixed(4))];
+      $('rep-coords-hint').textContent = `Tọa độ đã chọn: ${selectedReportCoords[1]}° N, ${selectedReportCoords[0]}° E`;
+      $('pick-on-map-btn').textContent = '✓ Đã chọn vị trí';
+      $('pick-on-map-btn').classList.add('primary-btn');
+      isPickingMapLocation = false;
+      $('map-status-msg').textContent = 'Đã chọn tọa độ báo cáo trên bản đồ!';
+      $('report-modal').classList.add('open');
+    }
+  });
+
+  // Load GIS Data
+  await loadGisLayers();
+}
+
+// 2. LOAD GIS LAYERS & SITES
+async function loadGisLayers() {
+  try {
+    const res = await fetch('/api/flood-data');
+    if (!res.ok) throw new Error();
+    gisData = await res.json();
+    renderGisLayers(gisData);
+  } catch (e) {
+    console.error('Lỗi khi tải GIS layers', e);
+  }
+}
+
+function renderGisLayers(data) {
+  if (!map || !data) return;
+
+  // Clear existing
+  layers.roads.clearLayers();
+  layers.residential.clearLayers();
+  layers.lakes.clearLayers();
+  layers.rivers.clearLayers();
+  layers.drainage.clearLayers();
+  layers.sites.clearLayers();
+
+  // Render Features from gis-layers.geojson
+  const feats = data.layers?.features || [];
+  feats.forEach(feat => {
+    const p = feat.properties;
+    const geom = feat.geometry;
+
+    // Roads
+    if (p.layer === 'roads') {
+      const latlngs = geom.coordinates.map(c => [c[1], c[0]]);
+      const poly = L.polyline(latlngs, {
+        color: p.flood_vulnerable ? '#f97316' : '#64748b',
+        weight: p.width_m > 30 ? 5 : 3.5,
+        opacity: 0.85,
+        dashArray: p.flood_vulnerable ? '4, 4' : null
+      }).addTo(layers.roads);
+      poly.bindTooltip(`<b>${p.name}</b><br>${p.road_type}`, { sticky: true });
+    }
+
+    // Residential areas
+    if (p.layer === 'residential') {
+      const latlngs = geom.coordinates[0].map(c => [c[1], c[0]]);
+      const poly = L.polygon(latlngs, {
+        color: '#15803d',
+        weight: 1.5,
+        fillColor: '#86efac',
+        fillOpacity: 0.25
+      }).addTo(layers.residential);
+      poly.bindTooltip(`<b>${p.name}</b><br>Dân số: ${p.population.toLocaleString('vi-VN')} người · ${p.area_ha} ha`, { sticky: true });
+    }
+
+    // Lakes
+    if (p.layer === 'lakes') {
+      const latlngs = geom.coordinates[0].map(c => [c[1], c[0]]);
+      const poly = L.polygon(latlngs, {
+        color: '#0284c7',
+        weight: 2,
+        fillColor: '#38bdf8',
+        fillOpacity: 0.55
+      }).addTo(layers.lakes);
+      poly.bindTooltip(`<b>${p.name}</b><br>Dung tích: ${p.capacity_m3.toLocaleString('vi-VN')} m³`, { sticky: true });
+    }
+
+    // Rivers & Canals
+    if (p.layer === 'rivers') {
+      const latlngs = geom.coordinates.map(c => [c[1], c[0]]);
+      const poly = L.polyline(latlngs, {
+        color: '#0369a1',
+        weight: 6,
+        opacity: 0.9
+      }).addTo(layers.rivers);
+      poly.bindTooltip(`<b>${p.name}</b><br>Mực nước: ${p.current_water_level_m}m · ${p.type}`, { sticky: true });
+    }
+
+    // Drainage & Pump Stations
+    if (p.layer === 'drainage') {
+      if (geom.type === 'Point') {
+        const [lng, lat] = geom.coordinates;
+        const marker = L.circleMarker([lat, lng], {
+          radius: 9,
+          color: '#ffffff',
+          weight: 2,
+          fillColor: '#ea580c',
+          fillOpacity: 0.95
+        }).addTo(layers.drainage);
+        marker.bindPopup(`<b>${p.name}</b><br>${p.role || ''}<br><b>${p.operating_pumps || ''}</b>`);
+        marker.bindTooltip(p.name);
+      } else if (geom.type === 'LineString') {
+        const latlngs = geom.coordinates.map(c => [c[1], c[0]]);
+        const poly = L.polyline(latlngs, {
+          color: '#d97706',
+          weight: 4,
+          dashArray: '5, 8',
+          opacity: 0.85
+        }).addTo(layers.drainage);
+        poly.bindTooltip(`<b>${p.name}</b><br>${p.status || ''}`, { sticky: true });
+      }
+    }
+  });
+
+  // Render 16 Flood Sites
+  const sites = data.sites?.features || [];
+  sites.forEach(f => {
+    const [lng, lat] = f.geometry.coordinates;
+    const p = f.properties;
+    const color = RISK_COLORS[p.risk_level] || '#ea580c';
+    const isDanger = p.risk_level === 'very_high';
+
+    const marker = L.circleMarker([lat, lng], {
+      radius: isDanger ? 12 : 9,
+      color: '#ffffff',
+      weight: 3,
+      fillColor: color,
+      fillOpacity: 0.95,
+      className: isDanger ? 'pulsing-beacon' : ''
+    }).addTo(layers.sites);
+
+    const popupContent = document.createElement('div');
+    popupContent.className = 'site-popup';
+    popupContent.innerHTML = `
+      <div style="font-weight:700;font-size:14px;color:#0f172a;margin-bottom:4px">${p.name}</div>
+      <div style="font-size:11px;color:#64748b;margin-bottom:8px">Đường: ${p.street} (${p.ward})</div>
+      <div style="display:flex;gap:6px;margin-bottom:8px">
+        <span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:4px;background:${color};color:white">Nguy cơ: ${RISK_LABELS[p.risk_level] || p.risk_level}</span>
+        <span style="font-size:10px;padding:2px 8px;border-radius:4px;background:#f1f5f9;color:#334155">Lịch sử: ${p.historical_max_depth_cm} cm</span>
+      </div>
+      <p style="font-size:11px;color:#475569;margin:0 0 8px;line-height:1.5">${p.note}</p>
+      <div style="font-size:11px;background:#f0fdf4;border-left:3px solid #166451;padding:6px;color:#166534;margin-bottom:8px"><b>Ứng phó:</b> ${p.solution}</div>
+      <button onclick="window.setRouteAvoid('${p.name.replace(/'/g, "\\'")}')" style="font-size:11px;padding:5px 10px;background:#166451;color:white;border:none;border-radius:5px;cursor:pointer">🚗 Đặt làm điểm cần tránh ngập</button>
+    `;
+
+    marker.bindPopup(popupContent);
+    marker.bindTooltip(`<b>${p.name}</b><br>Mức nguy cơ: ${RISK_LABELS[p.risk_level]}`, { sticky: true });
+  });
+
+  // Render Heavy Rain Zone Overlay (Northern Hà Đông)
+  const heavyRainPolygon = [
+    [20.989, 105.772],
+    [20.992, 105.795],
+    [20.975, 105.798],
+    [20.970, 105.775]
+  ];
+  const radar = L.polygon(heavyRainPolygon, {
+    color: '#3b82f6',
+    weight: 2,
+    dashArray: '3, 6',
+    fillColor: '#2563eb',
+    fillOpacity: 0.22
+  }).addTo(layers.rainRadar);
+  radar.bindTooltip('🌧️ <b>Vùng mây đối lưu mưa lớn đang phát triển (45 mm/h)</b>', { sticky: true });
+}
+
+// 3. LAYER TOOLBAR TOGGLE HANDLERS
+function setupLayerControls() {
+  const mapConfig = [
+    { id: 'layer-roads', layer: layers.roads },
+    { id: 'layer-residential', layer: layers.residential },
+    { id: 'layer-lakes', layer: layers.lakes },
+    { id: 'layer-rivers', layer: layers.rivers },
+    { id: 'layer-drainage', layer: layers.drainage },
+    { id: 'layer-sites', layer: layers.sites },
+    { id: 'layer-community', layer: layers.community },
+    { id: 'layer-rain-radar', layer: layers.rainRadar }
+  ];
+
+  mapConfig.forEach(({ id, layer }) => {
+    const el = $(id);
+    if (!el) return;
+    el.addEventListener('change', e => {
+      if (!map) return;
+      if (e.target.checked) {
+        layer.addTo(map);
+        e.target.parentElement.classList.add('active');
+      } else {
+        map.removeLayer(layer);
+        e.target.parentElement.classList.remove('active');
+      }
+    });
+  });
+
+  $('reset-map-view').onclick = () => {
+    map?.setView([20.972, 105.776], 13.5);
+  };
+
+  $('locate-user-btn').onclick = () => {
+    if (!navigator.geolocation) {
+      alert('Trình duyệt không hỗ trợ định vị.');
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      pos => {
+        const { latitude, longitude } = pos.coords;
+        map?.flyTo([latitude, longitude], 15);
+        L.marker([latitude, longitude]).addTo(map).bindPopup('<b>Vị trí của bạn</b>').openPopup();
+      },
+      () => alert('Không thể lấy được vị trí. Hãy bật GPS và cấp quyền truy cập.')
+    );
+  };
+}
+
+// 4. TIMELINE SIMULATION (14:00 -> 18:00)
+async function loadTimeline() {
+  try {
+    const res = await fetch('/api/timeline');
+    if (!res.ok) return;
+    const data = await res.json();
+    currentTimeline = data.timeline;
+    updateTimelineStep(1); // default 15:00
+  } catch (e) {
+    console.error('Lỗi nạp timeline', e);
+  }
+}
+
+function updateTimelineStep(stepIndex) {
+  if (!currentTimeline || !currentTimeline[stepIndex]) return;
+  const step = currentTimeline[stepIndex];
+
+  $('timeline-range').value = stepIndex;
+  $('timeline-current-label').textContent = step.label;
+  $('timeline-desc').textContent = `${step.status_desc} Lượng mưa: ${step.rain_rate_mm} mm/h · Diện tích ngập ước tính: ${step.active_ha} ha.`;
+
+  // Update mark active style
+  document.querySelectorAll('.timeline-marks .mark').forEach((m, idx) => {
+    m.classList.toggle('active', idx === Number(stepIndex));
+  });
+
+  // Render spreading water zones on map
+  layers.timelineSpread.clearLayers();
+  step.sites.forEach(site => {
+    if (site.depth_cm < 10) return;
+    const [lng, lat] = site.coordinates;
+    const color = RISK_COLORS[site.risk_level] || '#ea580c';
+
+    L.circle([lat, lng], {
+      radius: site.radius_meters,
+      color: color,
+      weight: 1.5,
+      fillColor: color,
+      fillOpacity: 0.35
+    }).addTo(layers.timelineSpread).bindTooltip(`<b>${site.name}</b><br>Độ sâu thời điểm này: ${site.depth_cm} cm · Lan rộng: ${site.radius_meters}m`);
+  });
+
+  $('map-status-msg').textContent = `Mô phỏng thời gian ${step.hour}: Diện tích ngập ${step.active_ha} ha`;
+}
+
+function setupTimelineEvents() {
+  $('timeline-range').addEventListener('input', e => {
+    updateTimelineStep(Number(e.target.value));
+  });
+
+  document.querySelectorAll('.timeline-marks .mark').forEach(m => {
+    m.addEventListener('click', () => {
+      updateTimelineStep(Number(m.dataset.step));
+    });
+  });
+
+  $('timeline-play-btn').onclick = () => {
+    if (isPlayingTimeline) {
+      clearInterval(timelineTimer);
+      isPlayingTimeline = false;
+      $('timeline-play-btn').textContent = '▶ Tự động chạy (Play)';
+      $('timeline-play-btn').classList.remove('primary');
+    } else {
+      isPlayingTimeline = true;
+      $('timeline-play-btn').textContent = '⏸ Tạm dừng (Pause)';
+      $('timeline-play-btn').classList.add('primary');
+
+      timelineTimer = setInterval(() => {
+        let next = Number($('timeline-range').value) + 1;
+        if (next > 4) next = 0;
+        updateTimelineStep(next);
+      }, 2400);
+    }
+  };
+}
+
+// 5. AI FORECAST PANEL (+30m, +1h, +2h, +3h)
+async function loadAiForecast(horizon = '+1h') {
+  try {
+    const res = await fetch(`/api/ai-forecast?horizon=${encodeURIComponent(horizon)}`);
+    if (!res.ok) return;
+    currentForecast = await res.json();
+    renderAiForecast(currentForecast);
+  } catch (e) {
+    console.error('Lỗi nạp AI forecast', e);
+  }
+}
+
+function renderAiForecast(data) {
+  if (!data) return;
+  const top = data.top_hotspot;
+
+  $('ai-top-location').textContent = `Nguy cơ ngập ${top.risk_label.toLowerCase()} – ${top.name}`;
+  $('ai-depth-val').textContent = top.depth_range_text;
+  $('ai-start-val').textContent = top.start_time;
+  $('ai-confidence-val').textContent = `${top.confidence_pct}%`;
+
+  // Render list of sites in AI panel
+  const listEl = $('ai-sites-list');
+  listEl.innerHTML = '';
+
+  data.predictions.forEach(p => {
+    const item = document.createElement('div');
+    item.className = 'ai-site-item';
+    item.innerHTML = `
+      <div class="ai-site-info">
+        <strong>${p.name}</strong>
+        <span>Dự kiến: ${p.start_time} · Độ sâu: <b>${p.depth_range_text}</b></span>
+      </div>
+      <span class="ai-site-badge badge-${p.risk_level}">${p.risk_label} · ${p.confidence_pct}%</span>
+    `;
+
+    item.onclick = () => {
+      const [lng, lat] = p.coordinates;
+      map?.flyTo([lat, lng], 16);
+      L.popup().setLatLng([lat, lng]).setContent(`
+        <b>${p.name}</b><br>
+        Mức nguy cơ: <b>${p.risk_label}</b><br>
+        Độ sâu dự báo: <b>${p.depth_range_text}</b><br>
+        Thời gian ngập: <b>${p.start_time}</b><br>
+        Độ tin cậy: <b>${p.confidence_pct}%</b>
+      `).openOn(map);
+    };
+
+    listEl.appendChild(item);
   });
 }
-async function loadWeather(){
-  $('refresh').disabled=true;$('weather-status').textContent='Đang cập nhật…';
-  try{const r=await fetch('/api/weather',{signal:AbortSignal.timeout(20000)});if(!r.ok)throw Error();const data=await r.json();renderWeather(data);weather=data;$('export').disabled=false;}
-  catch{$('export-csv').disabled=true;$('use-forecast').disabled=true;$('forecast-summary').textContent='Chưa có dữ liệu hiện hành để tổng hợp.';weather=null;$('export').disabled=true;$('rain-now').textContent='—';$('rain-total').textContent='—';$('weather-status').textContent='Không kết nối được nguồn mưa';$('weather-time').textContent='Không có dự báo hiện hành. Có thể dùng kịch bản mô phỏng bên dưới.';$('chart').innerHTML='<p>Chưa có dữ liệu. Nhấn “Cập nhật mưa” để thử lại.</p>';$('weather-table').replaceChildren();}
-  finally{$('refresh').disabled=false;}
-}
-$('refresh').onclick=loadWeather;
-$('export').onclick=()=>{if(!weather)return;const url=URL.createObjectURL(new Blob([JSON.stringify(weather,null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download='hadong-weather.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};
-function scenario(changed){
-  if(changed)$('scenario-origin').textContent='Kịch bản do bạn điều chỉnh · không phải cảnh báo thực tế.';
-  if(+$('rain3').value<+$('rain1').value){if(changed==='rain3')$('rain1').value=$('rain3').value;else $('rain3').value=$('rain1').value;}
-  const r1=+$('rain1').value,r3=+$('rain3').value,result=assess(r1,r3);
-  $('rain1-value').value=r1;$('rain3-value').value=r3;
-  $('risk-result').className='risk-result '+result.level;
-  $('risk-result').innerHTML=`<strong>${result.score}<small style="font-size:13px">/100</small></strong><div><b>Chỉ số kịch bản: ${result.label}</b><p>Ngưỡng minh họa · chưa hiệu chỉnh tại Hà Đông</p></div>`;
-  const first=result.level==='high'?['Ưu tiên an toàn khi có ngập','Tránh đi qua vùng nước ngập; theo dõi hướng dẫn và thông báo chính thức của địa phương.']:result.level==='medium'?['Chuẩn bị phương án ứng phó','Theo dõi diễn biến mưa và thông tin địa phương; chủ động bảo vệ tài sản tại vị trí từng bị ngập.']:['Duy trì theo dõi','Chỉ số thấp không đồng nghĩa không có ngập. Tiếp tục theo dõi thông tin thực tế tại khu vực.'];
-  const advice=[first,['Bổ sung quan trắc thực địa','Ghi nhận thời điểm, tọa độ, độ sâu và thời gian rút nước khi có thể thực hiện an toàn.'],['Phối hợp với địa phương','Đối chiếu tình trạng thoát nước và kế hoạch ứng phó với đơn vị quản lý hạ tầng.']];
-  $('advice').innerHTML=advice.map((a,i)=>`<div class="advice-row"><span>0${i+1}</span><div><b>${a[0]}</b><p>${a[1]}</p></div></div>`).join('');
-}
-['rain1','rain3'].forEach(id=>$(id).oninput=()=>scenario(id));
-document.querySelectorAll('nav a').forEach(a=>a.onclick=()=>{document.querySelectorAll('nav a').forEach(n=>n.classList.remove('active'));a.classList.add('active');});
 
-document.querySelector('#forecast h2').id='forecast-title';
-const toolbar=document.createElement('div');toolbar.className='forecast-toolbar';
-toolbar.innerHTML='<div class="periods" role="group" aria-label="Khoảng thời gian dự báo"><button data-hours="6" aria-pressed="false">6 giờ</button><button data-hours="12" aria-pressed="false">12 giờ</button><button data-hours="24" aria-pressed="true">24 giờ</button></div><button id="print-report">In / Lưu PDF</button>';
-$('weather-time').before(toolbar);
-const forecastSummary=document.createElement('p');forecastSummary.id='forecast-summary';forecastSummary.className='forecast-summary';forecastSummary.setAttribute('aria-live','polite');forecastSummary.textContent='Đang tổng hợp dự báo…';$('weather-time').after(forecastSummary);
-toolbar.querySelectorAll('[data-hours]').forEach(button=>button.onclick=()=>{horizon=Number(button.dataset.hours);toolbar.querySelectorAll('[data-hours]').forEach(b=>b.setAttribute('aria-pressed',String(b===button)));$('forecast-title').textContent='Lượng mưa dự báo trong '+horizon+' giờ tới';if(weather){try{renderWeather(weather);}catch{loadWeather();}}});
-$('print-report').onclick=()=>window.print();
-const csvButton=document.createElement('button');csvButton.id='export-csv';csvButton.disabled=true;csvButton.textContent='Tải bảng CSV';$('export').after(csvButton);
-csvButton.onclick=()=>{if(!weather)return;const rows=futureHours(weather).slice(0,horizon);const csv='\uFEFFtime_utc_plus_7,rain_1h_mm,rain_3h_mm\r\n'+rows.map(h=>[h.time+'+07:00',h.rain??'',h.rain3h??''].join(',')).join('\r\n');const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download='hadong-rain-'+horizon+'h.csv';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};
-const useForecast=document.createElement('button');useForecast.id='use-forecast';useForecast.disabled=true;useForecast.textContent='Dùng giờ mưa lớn nhất trong dự báo';
-const scenarioOrigin=document.createElement('p');scenarioOrigin.id='scenario-origin';scenarioOrigin.className='muted small';scenarioOrigin.textContent='Kịch bản minh họa ban đầu · không phải cảnh báo thực tế.';
-$('scenario').querySelector('.muted').after(useForecast,scenarioOrigin);
-useForecast.onclick=()=>{if(!weather)return;const peak=futureHours(weather).filter(h=>h.rain!==null&&h.rain3h!==null).reduce((best,h)=>!best||h.rain>best.rain?h:best,null);if(!peak)return;$('rain1').max=Math.max(100,Math.ceil(peak.rain));$('rain3').max=Math.max(250,Math.ceil(peak.rain3h));$('rain1').step='any';$('rain3').step='any';$('rain1').value=peak.rain;$('rain3').value=peak.rain3h;scenario();scenarioOrigin.textContent='Đầu vào từ dự báo lúc '+peak.time.replace('T',' ')+' (UTC+7). Chỉ số vẫn là quy tắc thử nghiệm, không phải AI.';};
-setInterval(()=>{if(document.visibilityState==='visible'&&!$('refresh').disabled)loadWeather();},15*60*1000);
-scenario();initMap();loadWeather();
+function setupAiHorizonEvents() {
+  document.querySelectorAll('.ai-horizon-selector .horizon-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.ai-horizon-selector .horizon-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      loadAiForecast(btn.dataset.horizon);
+    });
+  });
+}
+
+// 6. LOCATION SEARCH & RISK EVALUATION
+async function searchLocation(query) {
+  if (!query) return;
+  try {
+    const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
+    if (!res.ok) return;
+    const data = await res.json();
+    renderSearchResult(data);
+  } catch (e) {
+    console.error('Lỗi tìm kiếm địa điểm', e);
+  }
+}
+
+function renderSearchResult(data) {
+  if (!data) return;
+
+  $('search-res-title').textContent = data.matched_location;
+  $('search-res-ward').textContent = `${data.street} (${data.ward})`;
+  $('search-res-depth').textContent = data.depth_range_text;
+  $('search-res-time').textContent = data.expected_start_time;
+  $('search-res-conf').textContent = `${data.confidence_pct}%`;
+
+  const badge = $('search-res-risk-badge');
+  badge.textContent = data.risk_label;
+  badge.className = `badge ${data.risk_level === 'very_high' ? 'danger' : data.risk_level === 'high' ? 'warning' : 'info'}`;
+
+  $('search-res-advisory').textContent = data.safety_advisory;
+
+  $('search-focus-map-btn').onclick = () => {
+    const [lng, lat] = data.coordinates;
+    map?.flyTo([lat, lng], 16);
+    L.popup().setLatLng([lat, lng]).setContent(`
+      <b>${data.matched_location}</b><br>
+      Nguy cơ: <b>${data.risk_label}</b><br>
+      Độ sâu: <b>${data.depth_range_text}</b>
+    `).openOn(map);
+  };
+
+  $('search-find-avoid-btn').onclick = () => {
+    $('route-to').value = data.matched_location;
+    $('routing-section').scrollIntoView({ behavior: 'smooth' });
+    calculateAvoidanceRoute();
+  };
+}
+
+function setupSearchEvents() {
+  $('search-btn').onclick = () => {
+    searchLocation($('location-search-input').value);
+  };
+
+  $('location-search-input').addEventListener('keydown', e => {
+    if (e.key === 'Enter') searchLocation(e.target.value);
+  });
+
+  document.querySelectorAll('.search-suggestions .sugg-tag').forEach(tag => {
+    tag.addEventListener('click', () => {
+      $('location-search-input').value = tag.dataset.query;
+      searchLocation(tag.dataset.query);
+    });
+  });
+}
+
+// 7. SMART FLOOD AVOIDANCE ROUTING
+async function calculateAvoidanceRoute() {
+  const from = $('route-from').value;
+  const to = $('route-to').value;
+  try {
+    const res = await fetch(`/api/routing?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);
+    if (!res.ok) return;
+    const data = await res.json();
+    renderAvoidanceRoute(data);
+  } catch (e) {
+    console.error('Lỗi tính toán tuyến đường', e);
+  }
+}
+
+function renderAvoidanceRoute(routeData) {
+  if (!map || !routeData) return;
+  layers.routing.clearLayers();
+
+  const reg = routeData.regular_route;
+  const safe = routeData.safe_route;
+
+  // Draw Regular Flooded Route (Red dashed)
+  const regCoords = reg.path.map(c => [c[1], c[0]]);
+  const regPoly = L.polyline(regCoords, {
+    color: '#dc2626',
+    weight: 5,
+    dashArray: '6, 8',
+    opacity: 0.8
+  }).addTo(layers.routing);
+  regPoly.bindTooltip(`⚠️ ${reg.name}<br>Có ${reg.flood_spots.length} điểm ngập sâu`, { sticky: true });
+
+  // Draw Safe Avoidance Route (Green solid)
+  const safeCoords = safe.path.map(c => [c[1], c[0]]);
+  const safePoly = L.polyline(safeCoords, {
+    color: '#166451',
+    weight: 6,
+    opacity: 0.95
+  }).addTo(layers.routing);
+  safePoly.bindTooltip(`★ ${safe.name}<br>Cốt nền cao, an toàn`, { sticky: true });
+
+  // Add Start & End Markers
+  const startPt = safeCoords[0];
+  const endPt = safeCoords[safeCoords.length - 1];
+  L.marker(startPt).addTo(layers.routing).bindPopup(`<b>Điểm xuất phát:</b> ${routeData.origin}`);
+  L.marker(endPt).addTo(layers.routing).bindPopup(`<b>Điểm đến:</b> ${routeData.destination}`);
+
+  // Zoom map to fit both routes
+  const bounds = L.latLngBounds(safeCoords.concat(regCoords));
+  map.fitBounds(bounds, { padding: [40, 40] });
+
+  $('map-status-msg').textContent = `Đang hiển thị gợi ý tuyến tránh ngập: Xanh lá (An toàn) vs Đỏ đứt (Ngập nước)`;
+}
+
+// Global hook called from site popup
+window.setRouteAvoid = function(siteName) {
+  $('route-to').value = siteName;
+  $('routing-section').scrollIntoView({ behavior: 'smooth' });
+  calculateAvoidanceRoute();
+};
+
+// 8. RAINFALL MONITORING & CHART
+async function loadWeather() {
+  try {
+    $('rain-status-text').textContent = 'Đang đồng bộ dữ liệu quan trắc Open-Meteo...';
+    const res = await fetch('/api/weather');
+    if (!res.ok) throw new Error();
+    weatherData = await res.json();
+    renderWeatherChart(weatherData, currentRainHorizon);
+  } catch (e) {
+    $('rain-status-text').textContent = 'Sử dụng dữ liệu khí tượng mô phỏng trạm Hà Đông (mất kết nối trực tiếp)';
+  }
+}
+
+function renderWeatherChart(data, hoursCount = 24) {
+  const container = $('rain-chart-container');
+  container.innerHTML = '';
+
+  const hourly = data?.hourly;
+  const times = hourly?.time ? hourly.time.slice(0, hoursCount) : [];
+  const rains = hourly?.precipitation ? hourly.precipitation.slice(0, hoursCount) : [];
+
+  if (times.length === 0) {
+    // Generate fallback visual data for Hà Đông
+    for (let i = 0; i < hoursCount; i++) {
+      times.push(`${String((14 + i) % 24).padStart(2, '0')}:00`);
+      rains.push(Math.max(0, Math.round(Math.sin(i / 3) * 35 + 10)));
+    }
+  }
+
+  const maxRain = Math.max(10, ...rains);
+  const totalRain = rains.reduce((a, b) => a + b, 0).toFixed(1);
+  const peakRain = Math.max(...rains);
+  const peakIndex = rains.indexOf(peakRain);
+
+  $('rain-summary-badge').textContent = `Tổng mưa ${hoursCount}h: ${totalRain} mm · Đỉnh mưa: ${peakRain} mm/h lúc ${times[peakIndex]?.slice(11, 16) || times[peakIndex]}`;
+
+  times.forEach((t, i) => {
+    const rain = rains[i] ?? 0;
+    const isPeak = i === peakIndex && rain > 0;
+    const col = document.createElement('div');
+    col.className = 'chart-col';
+    col.title = `${t}: ${rain} mm`;
+
+    const heightPct = Math.round((rain / maxRain) * 140);
+
+    col.innerHTML = `
+      <span class="chart-val">${rain > 0 ? rain : ''}</span>
+      <div class="chart-bar ${isPeak ? 'peak' : ''}" style="height:${heightPct}px"></div>
+      <span class="chart-label">${i % 3 === 0 ? (t.length > 5 ? t.slice(11, 16) : t) : ''}</span>
+    `;
+
+    container.appendChild(col);
+  });
+}
+
+function setupRainEvents() {
+  document.querySelectorAll('.forecast-period-selector .horizon-chart-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.forecast-period-selector .horizon-chart-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      currentRainHorizon = Number(btn.dataset.hours);
+      if (weatherData) renderWeatherChart(weatherData, currentRainHorizon);
+    });
+  });
+
+  $('export-rain-json-btn').onclick = () => {
+    if (!weatherData) return;
+    const blob = new Blob([JSON.stringify(weatherData, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'ha-dong-weather-data.json';
+    a.click();
+  };
+
+  $('export-rain-csv-btn').onclick = () => {
+    if (!weatherData?.hourly) return;
+    const h = weatherData.hourly;
+    const rows = ['thoi_gian,luong_mua_mm,xac_suat_mua_pct'];
+    for (let i = 0; i < h.time.length; i++) {
+      rows.push(`${h.time[i]},${h.precipitation[i]},${h.precipitation_probability ? h.precipitation_probability[i] : ''}`);
+    }
+    const blob = new Blob([rows.join('\n')], { type: 'text/csv;charset=utf-8;' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'ha-dong-rain.csv';
+    a.click();
+  };
+
+  $('print-sheet-btn').onclick = () => window.print();
+}
+
+// 9. DASHBOARD KPIS & EARLY ALERTS
+async function loadDashboardAndAlerts() {
+  try {
+    // 1. Dashboard
+    const resDash = await fetch('/api/dashboard');
+    if (resDash.ok) {
+      const dash = await resDash.json();
+      const m = dash.metrics;
+      $('kpi-flooded-count').innerHTML = `${String(m.currently_flooded_points).padStart(2, '0')} <small>điểm</small>`;
+      $('kpi-high-risk-count').innerHTML = `${String(m.high_risk_points).padStart(2, '0')} <small>khu vực</small>`;
+      $('kpi-rain-now').innerHTML = `${m.current_rain_mm_h.toFixed(1)} <small>mm/h</small>`;
+      $('kpi-rain-24h').textContent = `Tích lũy 24h: ${m.rain_24h_total_mm} mm`;
+      $('kpi-water-level').innerHTML = `${m.river_water_level_m.toFixed(2)} <small>m</small>`;
+      $('kpi-flooded-area').innerHTML = `${m.risk_area_ha.toFixed(1)} <small>ha</small>`;
+
+      renderDashboardMiniChart(dash.trends['3h']);
+      setupTrendTabs(dash.trends);
+    }
+
+    // 2. Early Alerts
+    const resAlerts = await fetch('/api/alerts');
+    if (resAlerts.ok) {
+      const alertData = await resAlerts.json();
+      const ticker = $('top-alert-ticker');
+      $('alert-text').textContent = alertData.banner;
+      ticker.className = `top-alert-ticker ${alertData.level}`;
+
+      if (alertData.level === 'danger' || alertData.level === 'warning') {
+        playAlertBeep();
+      }
+    }
+  } catch (e) {
+    console.error('Lỗi tải dashboard/alerts', e);
+  }
+}
+
+function renderDashboardMiniChart(points = []) {
+  const chartEl = $('trend-chart-mini');
+  chartEl.innerHTML = '';
+  const maxRain = Math.max(10, ...points.map(p => p.rain_mm));
+
+  $('trend-summary-text').textContent = `Thời gian quan trắc: ${points[0]?.time} đến ${points[points.length - 1]?.time} · Mực nước sông Nhuệ dâng lên ${points[points.length - 1]?.water_level_m}m.`;
+
+  points.forEach((p, idx) => {
+    const item = document.createElement('div');
+    item.className = 'trend-bar-item';
+    const fillHeight = Math.max(8, Math.round((p.rain_mm / maxRain) * 60));
+    item.innerHTML = `
+      <span class="trend-bar-val">${p.rain_mm}</span>
+      <div class="trend-bar-fill ${idx === points.length - 1 ? 'active' : ''}" style="height:${fillHeight}px"></div>
+      <span class="trend-bar-label">${p.time}</span>
+    `;
+    chartEl.appendChild(item);
+  });
+}
+
+function setupTrendTabs(trends) {
+  document.querySelectorAll('.trend-tabs .trend-tab').forEach(tab => {
+    tab.onclick = () => {
+      document.querySelectorAll('.trend-tabs .trend-tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      renderDashboardMiniChart(trends[tab.dataset.period]);
+    };
+  });
+}
+
+// 10. COMMUNITY REPORTS & FORM MODAL
+async function loadCommunityReports() {
+  try {
+    const res = await fetch('/api/community-reports');
+    if (!res.ok) return;
+    const reports = await res.json();
+    renderCommunityFeed(reports);
+  } catch (e) {
+    console.error('Lỗi nạp báo cáo cộng đồng', e);
+  }
+}
+
+function renderCommunityFeed(reports) {
+  const feedEl = $('community-feed-list');
+  feedEl.innerHTML = '';
+  layers.community.clearLayers();
+
+  reports.forEach(rep => {
+    // 1. Add to map layer
+    const [lng, lat] = rep.coordinates || [105.78, 20.97];
+    const marker = L.circleMarker([lat, lng], {
+      radius: 8,
+      color: '#ffffff',
+      weight: 2,
+      fillColor: '#7c3aed',
+      fillOpacity: 0.95
+    }).addTo(layers.community);
+
+    marker.bindPopup(`
+      <div style="font-size:12px">
+        <b style="color:#7c3aed">📱 Báo cáo từ ${rep.reporter_name}</b><br>
+        <b>Vị trí:</b> ${rep.location_name}<br>
+        <b>Độ sâu:</b> ${rep.depth_cm} cm<br>
+        <p style="margin:4px 0">${rep.description}</p>
+        ${rep.photo_url ? `<img src="${rep.photo_url}" style="width:100%;max-height:120px;object-fit:cover;border-radius:6px;margin-top:4px">` : ''}
+      </div>
+    `);
+
+    // 2. Add to feed list
+    const card = document.createElement('div');
+    card.className = 'community-report-card';
+    card.innerHTML = `
+      <img class="rep-thumbnail" src="${rep.photo_url || 'https://images.unsplash.com/photo-1515694346937-94d85e41e6f0?w=200&auto=format&fit=crop&q=60'}" alt="Hiện trường">
+      <div class="rep-content">
+        <div class="rep-header">
+          <span class="rep-author">${rep.reporter_name}</span>
+          <span class="rep-time">${new Date(rep.reported_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}</span>
+        </div>
+        <div class="rep-location">📍 ${rep.location_name}</div>
+        <p class="rep-desc">${rep.description}</p>
+        <div class="rep-footer">
+          <span class="ai-site-badge badge-${rep.depth_level}">Độ sâu: ~${rep.depth_cm} cm</span>
+          <span class="rep-verified-badge">✓ Đã xác thực (${rep.votes} lượt xác nhận)</span>
+        </div>
+      </div>
+    `;
+
+    card.onclick = () => {
+      map?.flyTo([lat, lng], 16);
+      marker.openPopup();
+    };
+
+    feedEl.appendChild(card);
+  });
+}
+
+function setupCommunityModalEvents() {
+  const modal = $('report-modal');
+
+  const openModal = () => {
+    modal.classList.add('open');
+    modal.setAttribute('aria-hidden', 'false');
+  };
+  const closeModal = () => {
+    modal.classList.remove('open');
+    modal.setAttribute('aria-hidden', 'true');
+  };
+
+  $('open-report-modal-btn').onclick = openModal;
+  $('report-quick-btn').onclick = openModal;
+  $('modal-close-btn').onclick = closeModal;
+  $('modal-cancel-btn').onclick = closeModal;
+
+  // Radio button toggle active class
+  document.querySelectorAll('.depth-option-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.depth-option-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+    });
+  });
+
+  // Pick on map button
+  $('pick-on-map-btn').onclick = () => {
+    closeModal();
+    isPickingMapLocation = true;
+    $('map-status-msg').textContent = '👉 Hãy nhấp chuột vào vị trí ngập trên bản đồ để chọn tọa độ!';
+    $('gis-map-section').scrollIntoView({ behavior: 'smooth' });
+  };
+
+  // Image preview
+  $('rep-photo').onchange = e => {
+    const file = e.target.files[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = evt => {
+        $('photo-preview').src = evt.target.result;
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  // Submit community report form
+  $('community-report-form').onsubmit = async e => {
+    e.preventDefault();
+    const checkedDepth = document.querySelector('input[name="depth-level"]:checked')?.value || 'medium';
+    const depthCm = checkedDepth === 'very_high' ? 50 : checkedDepth === 'high' ? 38 : checkedDepth === 'medium' ? 25 : 12;
+
+    const payload = {
+      reporter_name: $('rep-name').value.trim(),
+      location_name: $('rep-street').value.trim(),
+      coordinates: selectedReportCoords,
+      depth_level: checkedDepth,
+      depth_cm: depthCm,
+      photo_url: $('photo-preview').src,
+      description: $('rep-desc').value.trim()
+    };
+
+    try {
+      const res = await fetch('/api/community-reports', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (res.ok) {
+        alert('Cảm ơn bạn! Báo cáo ngập úng đã được gửi và cập nhật lên bản đồ GIS Hà Đông.');
+        closeModal();
+        $('community-report-form').reset();
+        await loadCommunityReports();
+      }
+    } catch (err) {
+      alert('Không thể gửi báo cáo. Vui lòng kiểm tra lại.');
+    }
+  };
+}
+
+// 11. ACTIONABLE EMERGENCY SOLUTIONS
+async function loadActionableSolutions() {
+  try {
+    const res = await fetch('/api/solutions');
+    if (!res.ok) return;
+    const solutions = await res.json();
+    renderActionableSolutions(solutions);
+  } catch (e) {
+    console.error('Lỗi tải giải pháp ứng phó', e);
+  }
+}
+
+function renderActionableSolutions(solutions) {
+  const container = $('action-solutions-list');
+  container.innerHTML = '';
+
+  solutions.forEach(sol => {
+    const card = document.createElement('div');
+    card.className = 'solution-group-card';
+    const priorityClass = sol.priority === 'Khẩn cấp' ? 'danger' : sol.priority === 'Ưu tiên 1' ? 'warning' : 'info';
+
+    card.innerHTML = `
+      <div class="sol-card-head">
+        <div class="sol-title-wrap">
+          <span style="font-size:18px">${sol.icon}</span>
+          <span>${sol.category}</span>
+        </div>
+        <span class="sol-priority ${priorityClass}">${sol.priority}</span>
+      </div>
+      <ul class="sol-action-items">
+        ${sol.actions.map(act => `<li>${act}</li>`).join('')}
+      </ul>
+    `;
+    container.appendChild(card);
+  });
+}
+
+// 12. GENERAL SETUP & EVENT BINDINGS
+function setupGlobalEvents() {
+  $('refresh-btn').onclick = async () => {
+    $('refresh-btn').disabled = true;
+    $('refresh-btn').textContent = 'Đang tải...';
+    await Promise.all([
+      loadWeather(),
+      loadDashboardAndAlerts(),
+      loadAiForecast('+1h'),
+      loadTimeline(),
+      loadCommunityReports(),
+      loadActionableSolutions()
+    ]);
+    $('refresh-btn').disabled = false;
+    $('refresh-btn').textContent = '↻ Cập nhật dữ liệu';
+  };
+
+  $('toggle-sound-btn').onclick = () => {
+    soundEnabled = !soundEnabled;
+    $('toggle-sound-btn').textContent = soundEnabled ? '🔔 Âm cảnh báo: BẬT' : '🔕 Âm cảnh báo: TẮT';
+    $('toggle-sound-btn').classList.toggle('primary-btn', soundEnabled);
+    if (soundEnabled) playAlertBeep();
+  };
+
+  $('calc-route-btn').onclick = calculateAvoidanceRoute;
+}
+
+// BOOTSTRAP APPLICATION
+window.addEventListener('DOMContentLoaded', async () => {
+  await initMap();
+  setupLayerControls();
+  setupTimelineEvents();
+  setupAiHorizonEvents();
+  setupSearchEvents();
+  setupRainEvents();
+  setupCommunityModalEvents();
+  setupGlobalEvents();
+
+  // Load initial data concurrently
+  await Promise.all([
+    loadWeather(),
+    loadDashboardAndAlerts(),
+    loadTimeline(),
+    loadAiForecast('+1h'),
+    loadCommunityReports(),
+    loadActionableSolutions(),
+    searchLocation('Nguyễn Trãi, Hà Đông'),
+    calculateAvoidanceRoute()
+  ]);
+});

@@ -1,60 +1,68 @@
-"""Train only on verified labelled observations; no synthetic flood labels.
-Usage: python ml/train.py path/to/observations.csv
-"""
+"""Issue-time flood model pipeline; refuses unverified labels. See ml/README.md."""
+import argparse
+import hashlib
 import json
-import sys
 from pathlib import Path
-import joblib
+import numpy as np
 import pandas as pd
+import joblib
+import sklearn
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import classification_report, confusion_matrix, average_precision_score
+from sklearn.linear_model import LogisticRegression
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import average_precision_score,roc_auc_score,brier_score_loss,precision_recall_fscore_support,fbeta_score,confusion_matrix
+from flood_data import FEATURES,validate_observations,split_events
 
-FEATURES = ['rain_1h_mm', 'rain_3h_mm', 'elevation_m', 'impervious_fraction', 'distance_drain_m']
+def logit(prob):
+    p=np.clip(prob,1e-6,1-1e-6)
+    return np.log(p/(1-p)).reshape(-1,1)
+
+def metrics(y,p,threshold):
+    pred=p>=threshold
+    precision,recall,f1,_=precision_recall_fscore_support(y,pred,average='binary',zero_division=0)
+    return {'average_precision':float(average_precision_score(y,p)),'roc_auc':float(roc_auc_score(y,p)),
+        'brier_score':float(brier_score_loss(y,p)),'precision':float(precision),'recall':float(recall),'f1':float(f1),
+        'f2':float(fbeta_score(y,pred,beta=2,zero_division=0)),'confusion_matrix_labels':[0,1],'confusion_matrix':confusion_matrix(y,pred,labels=[0,1]).tolist()}
 
 def main():
-    if len(sys.argv) != 2:
-        raise SystemExit('Usage: python ml/train.py observations.csv (see ml/README.md)')
-    df = pd.read_csv(sys.argv[1])
-    required = FEATURES + ['event_id', 'time', 'site_id', 'flooded']
-    missing = sorted(set(required) - set(df.columns))
-    if missing:
-        raise SystemExit(f'Missing columns: {missing}')
-    if df[required].isna().any().any():
-        raise SystemExit('Missing values: resolve them before training.')
-    df['time'] = pd.to_datetime(df['time'], utc=True, errors='raise')
-    for col in FEATURES + ['flooded']:
-        df[col] = pd.to_numeric(df[col], errors='raise')
-    import numpy as np
-    if not np.isfinite(df[FEATURES].to_numpy()).all():
-        raise SystemExit('Non-finite features.')
-    if not set(df.flooded.unique()) <= {0, 1} or df.flooded.nunique() != 2:
-        raise SystemExit('flooded must contain both 0 and 1 labels.')
-    if (df[['rain_1h_mm','rain_3h_mm','distance_drain_m']] < 0).any().any() or not df.impervious_fraction.between(0,1).all():
-        raise SystemExit('Invalid rain, distance or impervious fraction.')
-    if (df.rain_3h_mm < df.rain_1h_mm).any():
-        raise SystemExit('3h rainfall must include the final 1h rainfall.')
-    if df.duplicated(['site_id','time']).any():
-        raise SystemExit('Duplicate site/time rows.')
-    events = df.groupby('event_id')['time'].min().sort_values().index.tolist()
-    if len(events) < 5:
-        raise SystemExit('Need at least 5 independent events; this is only a software minimum, not evidence of scientific sufficiency.')
-    cut = max(1, int(len(events)*0.8))
-    train = df[df.event_id.isin(events[:cut])]
-    test = df[df.event_id.isin(events[cut:])]
-    if train.time.max() >= test.time.min():
-        raise SystemExit('Events overlap the temporal holdout. Define independent non-overlapping events.')
-    if min(train.flooded.nunique(), test.flooded.nunique()) < 2:
-        raise SystemExit('Both holdout and training sets need positive and negative labels; collect more independent events.')
-    model = RandomForestClassifier(n_estimators=300, min_samples_leaf=3, class_weight='balanced', random_state=42, n_jobs=-1)
-    model.fit(train[FEATURES], train.flooded)
-    pred = model.predict(test[FEATURES])
-    probability = model.predict_proba(test[FEATURES])[:, list(model.classes_).index(1)]
-    out = Path(__file__).parent / 'artifacts'
-    out.mkdir(exist_ok=True)
-    report = {'task':'Retrospective flood classification; NOT validated early-warning forecast', 'features':FEATURES, 'train_rows':len(train), 'test_rows':len(test), 'train_events':list(map(str,events[:cut])), 'test_events':list(map(str,events[cut:])), 'metrics':classification_report(test.flooded,pred,output_dict=True,zero_division=0), 'confusion_matrix_labels':[0,1], 'confusion_matrix':confusion_matrix(test.flooded,pred,labels=[0,1]).tolist(), 'average_precision':average_precision_score(test.flooded,probability), 'baseline_always_dry_accuracy':float((test.flooded==0).mean()), 'limitations':'Requires external spatial validation, calibration and evaluation with issue-time forecast inputs before early-warning use.'}
-    joblib.dump({'model':model,'features':FEATURES},out/'flood-model.joblib')
-    (out/'evaluation.json').write_text(json.dumps(report,indent=2,ensure_ascii=False),encoding='utf-8')
+    parser=argparse.ArgumentParser()
+    parser.add_argument('csv')
+    parser.add_argument('--depth-threshold-cm',type=float,default=10)
+    args=parser.parse_args()
+    source=Path(args.csv)
+    df=validate_observations(pd.read_csv(source),args.depth_threshold_cm)
+    train,val,test=split_events(df)
+    candidates={'random_forest':RandomForestClassifier(n_estimators=300,max_depth=12,min_samples_leaf=5,class_weight='balanced',n_jobs=2,random_state=42),
+        'logistic_regression':make_pipeline(StandardScaler(),LogisticRegression(class_weight='balanced',max_iter=2000,random_state=42))}
+    validation={}
+    for name,model in candidates.items():
+        model.fit(train[FEATURES],train.flooded)
+        validation[name]=float(average_precision_score(val.flooded,model.predict_proba(val[FEATURES])[:,1]))
+    selected=max(validation,key=validation.get);model=candidates[selected]
+    # Independent chronological calibration partition; holdout remains untouched.
+    raw_val=model.predict_proba(val[FEATURES])[:,1]
+    calibrator=LogisticRegression(C=1,random_state=42).fit(logit(raw_val),val.flooded)
+    val_p=calibrator.predict_proba(logit(raw_val))[:,1]
+    thresholds=np.linspace(.05,.95,91)
+    threshold=float(max(thresholds,key=lambda t:fbeta_score(val.flooded,val_p>=t,beta=2,zero_division=0)))
+    raw_test=model.predict_proba(test[FEATURES])[:,1]
+    test_p=calibrator.predict_proba(logit(raw_test))[:,1]
+    baseline=np.full(len(test),train.flooded.mean())
+    report={'status':'research_evaluation_not_approved_for_operations','task':'flood_at_fixed_future_horizon','horizon_hours':int(df.horizon_hours.iloc[0]),
+        'depth_threshold_cm':args.depth_threshold_cm,'threshold_status':'Research definition, not official warning criterion',
+        'selected_model':selected,'features':FEATURES,'validation_average_precision':validation,'decision_threshold':threshold,
+        'threshold_selection':'Maximise F2 on calibration partition only; exploratory, not authority-approved',
+        'test_calibrated':metrics(test.flooded,test_p,threshold),'test_uncalibrated':metrics(test.flooded,raw_test,.5),
+        'test_prior_baseline':metrics(test.flooded,baseline,.5),
+        'split':{name:{'rows':len(part),'events':list(map(str,part.event_id.unique())),'positive_rows':int(part.flooded.sum()),'issued_start':part.issued_at.min().isoformat(),'target_end':part.target_at.max().isoformat()} for name,part in zip(['train','calibration','test'],[train,val,test])},
+        'source_sha256':hashlib.sha256(source.read_bytes()).hexdigest(),'sklearn_version':sklearn.__version__,
+        'limitations':['Metadata verification flags require a human source audit; software cannot certify truth.',
+            'Model choice, sigmoid calibration and threshold use same validation set; only final holdout metrics are evaluation.',
+            'Unseen-location spatial validation and prospective testing still required.',
+            'No automatic promotion to website or public upload of observations.']}
+    out=Path(__file__).parent/'artifacts';out.mkdir(exist_ok=True)
+    joblib.dump({'model':model,'calibrator':calibrator,'threshold':threshold,'features':FEATURES,'horizon_hours':report['horizon_hours'],'operational':False},out/'flood-model.joblib')
+    (out/'evaluation.json').write_text(json.dumps(report,indent=2,ensure_ascii=False,allow_nan=False),encoding='utf8')
     print(json.dumps(report,indent=2,ensure_ascii=False))
-
-if __name__ == '__main__':
-    main()
+if __name__=='__main__':main()
