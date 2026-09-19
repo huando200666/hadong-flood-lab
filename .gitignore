@@ -6,3 +6,6 @@ ml/artifacts/
 
 data/private/
 data/observations*.csv
+
+# Local browser verification output
+/artifacts/

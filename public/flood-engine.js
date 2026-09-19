@@ -1,102 +1,51 @@
-/**
- * Flood Intelligence Engine - Browser Edition
- * Runs entirely in the browser, no Node.js server needed.
- * All data loaded via fetch() from static JSON files.
- */
-
-let _sitesCache = null;
-let _layersCache = null;
-let _reportsCache = null;
-
-const RISK_COLORS = {
-  low: '#10b981',
-  medium: '#f59e0b',
-  high: '#ea580c',
-  very_high: '#dc2626'
-};
-
-const RISK_LABELS = {
-  low: 'Thấp',
-  medium: 'Trung bình',
-  high: 'Cao',
-  very_high: 'Rất cao'
-};
-
+import { matchLocation, validateReport, mergeReportBackup } from './app-utils.js';
+let _gisCache=null, _gisPending=null, _weatherCache=null, _weatherTime=0, _weatherPending=null;
+const RISK_COLORS={low:'#10b981',medium:'#f59e0b',high:'#ea580c',very_high:'#dc2626'};
+const RISK_LABELS={low:'Thấp',medium:'Trung bình',high:'Cao',very_high:'Rất cao'};
 export async function loadGisData() {
-  if (_sitesCache && _layersCache) return { sites: _sitesCache, layers: _layersCache };
-  const sitesUrl = new URL('./data/sites.geojson', import.meta.url).href;
-  const layersUrl = new URL('./data/gis-layers.geojson', import.meta.url).href;
-  const [sitesRes, layersRes] = await Promise.all([
-    fetch(sitesUrl),
-    fetch(layersUrl)
-  ]);
-  _sitesCache = await sitesRes.json();
-  _layersCache = await layersRes.json();
-  return { sites: _sitesCache, layers: _layersCache };
+  if(_gisCache)return _gisCache;
+  if(_gisPending)return _gisPending;
+  _gisPending=(async()=>{
+    const responses=await Promise.all(['sites.geojson','gis-layers.geojson'].map(file=>fetch(new URL('./data/'+file,import.meta.url),{signal:AbortSignal.timeout(12000)})));
+    if(responses.some(r=>!r.ok))throw new Error('Không tải được dữ liệu bản đồ.');
+    const [sites,layers]=await Promise.all(responses.map(r=>r.json()));
+    if(!Array.isArray(sites.features)||!sites.features.length||!Array.isArray(layers.features))throw new Error('Dữ liệu GIS không hợp lệ.');
+    _gisCache={sites,layers};return _gisCache;
+  })().finally(()=>{_gisPending=null;});
+  return _gisPending;
 }
-
 export async function loadReports() {
-  // Community reports stored in localStorage (no server)
-  const stored = localStorage.getItem('hadong-community-reports');
-  if (stored) {
-    try { _reportsCache = JSON.parse(stored); } catch { _reportsCache = []; }
-  }
-  if (_reportsCache) return _reportsCache;
-
-  // First load: seed from static JSON
   try {
-    const repUrl = new URL('./data/community-reports.json', import.meta.url).href;
-    const res = await fetch(repUrl);
-    _reportsCache = await res.json();
-    localStorage.setItem('hadong-community-reports', JSON.stringify(_reportsCache));
-  } catch {
-    _reportsCache = [];
+    const stored=JSON.parse(localStorage.getItem('hadong-community-reports')||'[]');
+    if(!Array.isArray(stored))throw new SyntaxError();
+    return stored.filter(r=>r&&typeof r==='object').map(r=>({...r,status:'unverified',votes:0}));
+  } catch(error) {
+    throw new Error(error instanceof SyntaxError?'Dữ liệu báo cáo đã lưu bị lỗi. Hãy sao lưu dữ liệu trình duyệt trước khi xử lý.':'Trình duyệt đang chặn lưu trữ báo cáo.');
   }
-  return _reportsCache;
 }
-
 export function saveReport(report) {
-  const reports = _reportsCache || [];
-  const newReport = {
-    id: 'rep-' + Date.now().toString(36),
-    reporter_name: report.reporter_name || 'Người dân Hà Đông',
-    location_name: report.location_name || 'Khu vực Hà Đông',
-    coordinates: report.coordinates || [105.78, 20.97],
-    depth_level: report.depth_level || 'medium',
-    depth_cm: Number(report.depth_cm) || 25,
-    photo_url: report.photo_url || '',
-    description: report.description || '',
-    reported_at: new Date().toISOString(),
-    status: 'verified',
-    votes: 1
-  };
-  reports.unshift(newReport);
-  _reportsCache = reports;
-  localStorage.setItem('hadong-community-reports', JSON.stringify(reports));
+  const validated=validateReport(report);
+  const stored=JSON.parse(localStorage.getItem('hadong-community-reports')||'[]');
+  if(!Array.isArray(stored))throw new Error('Không đọc được báo cáo đã lưu.');
+  const newReport={...validated,id:'rep-'+crypto.randomUUID(),reported_at:new Date().toISOString(),status:'unverified',votes:0};
+  try {localStorage.setItem('hadong-community-reports',JSON.stringify([newReport,...stored]));}
+  catch {throw new Error('Không lưu được báo cáo. Bộ nhớ có thể đã đầy; hãy thử bỏ ảnh.');}
   return newReport;
 }
-
-/**
- * Fetch weather directly from Open-Meteo (browser-side, no proxy needed)
- */
-let _weatherCache = null;
-let _weatherTime = 0;
-
-export async function fetchWeatherDirect() {
-  const now = Date.now();
-  if (_weatherCache && now - _weatherTime < 900000) return _weatherCache;
-  const url = 'https://api.open-meteo.com/v1/forecast?latitude=20.9708&longitude=105.7788&hourly=precipitation,precipitation_probability,temperature_2m&past_days=1&forecast_days=3&timezone=Asia%2FBangkok';
-  const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
-  if (!res.ok) throw new Error('Weather provider unavailable');
-  const data = await res.json();
-  _weatherTime = now;
-  _weatherCache = { ...data, retrieved_at: new Date(now).toISOString(), source: 'Open-Meteo forecast (direct)' };
-  return _weatherCache;
+export async function fetchWeatherDirect(force=false) {
+  if(!force&&_weatherCache&&Date.now()-_weatherTime<900000)return _weatherCache;
+  if(_weatherPending)return _weatherPending;
+  _weatherPending=(async()=>{
+    const url='https://api.open-meteo.com/v1/forecast?latitude=20.9708&longitude=105.7788&hourly=precipitation,precipitation_probability,temperature_2m&past_days=1&forecast_days=3&timezone=Asia%2FBangkok';
+    const res=await fetch(url,{signal:AbortSignal.timeout(15000)});
+    if(!res.ok)throw new Error('Không kết nối được nguồn thời tiết.');
+    const data=await res.json();
+    if(!Array.isArray(data.hourly?.time)||!data.hourly.time.length||!Array.isArray(data.hourly.precipitation)||data.hourly.time.length!==data.hourly.precipitation.length)throw new Error('Dữ liệu thời tiết không hợp lệ.');
+    _weatherTime=Date.now();_weatherCache={...data,retrieved_at:new Date(_weatherTime).toISOString(),source:'Open-Meteo forecast'};
+    return _weatherCache;
+  })().finally(()=>{_weatherPending=null;});
+  return _weatherPending;
 }
-
-/**
- * AI Flood Forecast
- */
 export async function getAiForecast(horizon = '+1h', currentRainRate = 35) {
   const { sites } = await loadGisData();
   const hKey = horizon.replace(/\s+/g, '').toLowerCase();
@@ -118,9 +67,9 @@ export async function getAiForecast(horizon = '+1h', currentRainRate = 35) {
     const historicalMax = p.historical_max_depth_cm || 45;
     const elevationPenalty = Math.max(0, (6.2 - (p.elevation_m || 5.5)) * 4.5);
     const rainImpact = (currentRainRate / 30) * horizonMultiplier.rainFactor;
-    let predictedDepth = Math.round(baseDepth * horizonMultiplier.depthFactor * rainImpact + elevationPenalty);
+    let predictedDepth = Math.round((baseDepth * horizonMultiplier.depthFactor + elevationPenalty) * rainImpact);
     predictedDepth = Math.min(predictedDepth, Math.round(historicalMax * 1.05));
-    predictedDepth = Math.max(5, predictedDepth);
+    predictedDepth = Math.max(0, predictedDepth);
     const minDepth = Math.max(0, predictedDepth - Math.round(predictedDepth * 0.15));
     const maxDepth = predictedDepth + Math.round(predictedDepth * 0.15);
     let riskLevel = 'low', riskLabel = 'Thấp';
@@ -135,14 +84,14 @@ export async function getAiForecast(horizon = '+1h', currentRainRate = 35) {
       coordinates: feature.geometry.coordinates, risk_level: riskLevel, risk_label: riskLabel,
       depth_min_cm: minDepth, depth_max_cm: maxDepth, depth_range_text: `${minDepth}–${maxDepth} cm`,
       start_time: startTimeStr,
-      confidence_pct: Math.min(95, Math.max(65, horizonMultiplier.conf + ((p.elevation_m || 5.5) < 5.0 ? 3 : -2))),
+      confidence_pct: null,
       note: p.note || '', solution: p.solution || ''
     };
   });
 
   const topHotspot = [...predictions].sort((a, b) => b.depth_max_cm - a.depth_max_cm)[0];
   return {
-    horizon: hKey, target_time: targetTimeStr, average_confidence_pct: horizonMultiplier.conf,
+    mode: 'simulation', horizon: hKey, target_time: targetTimeStr, average_confidence_pct: null,
     top_hotspot: {
       name: topHotspot.name, risk_label: topHotspot.risk_label,
       depth_range_text: topHotspot.depth_range_text, start_time: topHotspot.start_time,
@@ -252,16 +201,11 @@ export async function getTimelineSimulation() {
 /**
  * Location search
  */
-export async function searchLocationRisk(queryStr) {
+export async function searchLocationRisk(queryStr, rainRate = 35, horizon = '+1h') {
   if (!queryStr || typeof queryStr !== 'string') return null;
-  const q = queryStr.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
-  const forecast = await getAiForecast('+1h', 38);
-  const matchedSite = forecast.predictions.find(p => {
-    const nameNorm = p.name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-    const streetNorm = (p.street || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-    const wardNorm = (p.ward || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-    return nameNorm.includes(q) || streetNorm.includes(q) || wardNorm.includes(q) || q.includes(nameNorm) || q.includes(streetNorm);
-  }) || forecast.predictions[0];
+  const forecast = await getAiForecast(horizon, rainRate);
+  const matchedSite = matchLocation(forecast.predictions, queryStr);
+  if (!matchedSite) return null;
   return {
     query: queryStr, matched_location: matchedSite.name, street: matchedSite.street, ward: matchedSite.ward,
     coordinates: matchedSite.coordinates, risk_level: matchedSite.risk_level, risk_label: matchedSite.risk_label,
@@ -331,3 +275,11 @@ export function getActionableSolutions() {
 
 export { RISK_COLORS, RISK_LABELS };
 
+
+export async function importReports(payload) {
+  const current = await loadReports();
+  const merged = mergeReportBackup(current,payload);
+  try { localStorage.setItem('hadong-community-reports',JSON.stringify(merged.reports)); }
+  catch { throw new Error('Không đủ bộ nhớ để nhập bản sao lưu. Các báo cáo hiện tại được giữ nguyên.'); }
+  return merged.added;
+}

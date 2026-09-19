@@ -1,57 +1,64 @@
-# Hà Đông Flood Lab
+# Hà Đông Flood Lab 2.0
 
-Website nghiên cứu GIS và AI về ngập úng tại **phường Hà Đông, Hà Nội**. Giao diện tiếng Việt, hỗ trợ màn hình điện thoại. Node.js 20+; web không cần cài thư viện npm.
+Không gian nghiên cứu ngập úng Hà Đông, Hà Nội, với giao diện tiếng Việt cho máy tính và điện thoại. Web chạy bằng **Node.js 20 trở lên**, không cần `npm install` hoặc thư viện npm bên ngoài.
 
 ## Mở website
 
-**Cách dễ nhất trên Windows:** nhấp đúp `start.cmd`. Máy chủ chạy nền và trình duyệt mặc định tự mở website. Nếu máy chủ đã chạy, tệp chỉ mở lại website. Có thể đóng cửa sổ khởi động; máy chủ tiếp tục chạy đến khi tắt máy. Không cần nhập lệnh. Nếu muốn tự quản lý và dừng máy chủ bằng Ctrl+C, dùng cách thủ công dưới đây (khi chưa chạy nền).
+Trên Windows, nhấp đúp **`start.cmd`** để khởi động máy chủ nền và mở trình duyệt. Nếu máy chủ đã chạy, tệp mở lại website. Có thể đóng cửa sổ khởi động mà không dừng máy chủ.
 
-Trong thư mục dự án chạy:
+Để tự quản lý máy chủ, khi chưa chạy nền, mở terminal tại thư mục dự án:
 
 ```powershell
 node server.mjs
 ```
 
-Mở **http://localhost:3000**. Dừng bằng Ctrl+C. Cần Internet để tải bản đồ nền, Leaflet và thời tiết. Máy chủ chỉ lắng nghe trên máy cá nhân, chưa triển khai công khai.
+Truy cập **http://localhost:3000**; dừng bằng Ctrl+C. Máy chủ mặc định chỉ lắng nghe trên máy cá nhân. Cần Internet để tải Leaflet, bản đồ nền OpenStreetMap và dự báo Open-Meteo.
 
-## Đã triển khai
+## Giao diện và cách sử dụng
 
-- Bản đồ Leaflet/OpenStreetMap, 3 điểm tham chiếu khu vực có tư liệu về ảnh hưởng ngập; bật/tắt điểm, chọn vị trí, về trung tâm.
-- Backend lấy Open-Meteo, có timeout và cache 15 phút. Dự báo 24 giờ tới tại một điểm đại diện (20.9708, 105.7788); biểu đồ, bảng, xuất JSON. Thời gian UTC+7.
-- Khi thiếu mạng/dữ liệu hiển thị lỗi rõ ràng, không giả dữ liệu thời gian thực, không chuyển thiếu mưa thành 0.
-- Kịch bản mưa và chỉ số thử nghiệm có công thức công khai, kèm gợi ý ứng phó.
-- Danh mục nguồn và script tải mưa lịch sử 2025 (ERA5) cùng dự báo hiện hành.
-- Mã huấn luyện Random Forest bằng dữ liệu ngập được xác minh, tách sự kiện theo thời gian; xem `ml/README.md`.
+- **Tổng quan:** thanh điều hướng, chỉ số nhanh, trạng thái dữ liệu và nút cập nhật; bố cục tự thích ứng trên điện thoại.
+- **Bản đồ:** bật/tắt lớp địa điểm, sông hồ, đường, hạ tầng và báo cáo; tìm địa điểm có hoặc không dấu, lọc nguy cơ, xem chi tiết và định vị thiết bị khi được cấp quyền.
+- **Dự báo mưa:** chọn 6/12/24 giờ, xem biểu đồ và bảng, tổng mưa và giờ mưa lớn nhất; xuất CSV/JSON hoặc in/lưu PDF qua trình duyệt.
+- **Kịch bản:** điều chỉnh cường độ mưa và mốc 30 phút–3 giờ; có thể nạp giờ mưa dự báo lớn nhất, xem diễn biến giả định và hai tuyến đường mẫu.
+- **Chia sẻ bộ lọc:** sao chép liên kết lưu các tham số `rain`, `horizon`, `hours`, `q`, `risk`. Mở lại liên kết sẽ khôi phục thiết lập; báo cáo cá nhân và ảnh không nằm trong liên kết.
+
+Dự báo lấy dữ liệu thật từ Open-Meteo tại điểm đại diện **20.9708, 105.7788**, hiển thị theo UTC+7 và tự cập nhật mỗi **15 phút khi tab đang hiển thị**. Có cache và giới hạn thời gian chờ. Khi thiếu dữ liệu hoặc mất kết nối, giao diện báo lỗi/thiếu dữ liệu, không tự tạo thời tiết và không biến lượng mưa thiếu thành 0. Dữ liệu giả lập chỉ được dùng riêng trong kiểm thử.
+
+## Nhật ký báo ngập và sao lưu
+
+Báo cáo lưu trong **`localStorage` của trình duyệt hiện tại**, chưa gửi tới cộng đồng hoặc cơ quan chức năng. Mọi báo cáo mang trạng thái **chưa xác minh** (`unverified`). Có thể tìm lại báo cáo theo tên người ghi nhận, địa điểm hoặc mô tả.
+
+Ảnh JPEG, PNG hoặc WebP tối đa **1 MB** mỗi ảnh. Tọa độ là tùy chọn: nếu không chọn trên bản đồ, giá trị được lưu là `null`, không tự gán một địa điểm. Nội dung đang nhập và tọa độ được lưu nháp bằng **`sessionStorage` trong tab hiện tại**; ảnh không lưu vào bản nháp và phải chọn lại sau khi tải trang.
+
+Dùng **Xuất báo cáo JSON** để sao lưu. **Nhập bản sao lưu** nhận tệp JSON tối đa **8 MB**, kiểm tra dữ liệu, gộp với nhật ký hiện tại và bỏ qua mục trùng, không ghi đè báo cáo đã có. Dung lượng lưu trữ phụ thuộc trình duyệt; khi đầy, thử bỏ ảnh. Xóa dữ liệu trình duyệt có thể làm mất nhật ký, nên xuất bản sao lưu trước.
+
+API `/api/community-reports` là luồng lưu báo cáo riêng trên máy chủ, **không tự đồng bộ** với nhật ký trên trình duyệt.
+
+## Phạm vi dữ liệu
+
+Bản đồ địa điểm và hạ tầng là dữ liệu tham chiếu nghiên cứu. Nguy cơ, độ sâu, vùng lan, diễn biến theo thời gian và tuyến đường là **mô phỏng chưa kiểm định**, không mô tả tình trạng ngập hiện tại hoặc xác nhận đường có thể đi. Công thức thử nghiệm chưa phải mô hình AI đã huấn luyện; dự báo mưa ở một ô mô hình không đủ để kết luận riêng cho từng đường phố.
+
+Chưa có ranh giới phường đã xác minh, mô hình thủy lực hay hệ thống cảnh báo vận hành. Không dùng toàn bộ quận Hà Đông cũ làm ranh giới phường hiện nay. Đây là công cụ nghiên cứu, không thay thế thông báo của cơ quan chức năng.
+
+Nguồn được ghi trong `data/sources.json`; giao diện ghi công OpenStreetMap contributors và Open-Meteo. Dữ liệu mưa lịch sử 2025 là tái phân tích ERA5, không phải trạm đo; tệp dự báo tải về là ảnh chụp tại thời điểm tải. Web không âm thầm dùng ảnh chụp cũ thay cho nguồn hiện hành.
+
+## Phát triển và kiểm tra
+
+`public/` là nguồn giao diện chính. Sau khi sửa tài nguyên tĩnh, đồng bộ các bản sao ở thư mục gốc:
 
 ```powershell
-node scripts/download-data.mjs
-node --test tests/risk.test.mjs
+npm run sync:static
+npm test
+npm run test:browser
 ```
 
-`data/rainfall-history-2025.json` là dữ liệu tái phân tích, không phải trạm đo; `data/weather-forecast.json` là ảnh chụp dữ liệu tại thời điểm tải. Web dùng API hiện hành, không lặng lẽ dùng ảnh chụp cũ. Metadata lưu URL và thời gian tải. Nếu API lỗi, chạy lại script khi có mạng.
+`npm test` chạy kiểm tra logic và API. `npm run test:browser` cần **Node.js 22 trở lên** có `WebSocket` toàn cục và Chrome/Edge; chạy headless bằng hồ sơ tạm riêng, dọn hồ sơ sau kiểm thử và lưu kết quả hình ảnh trong `artifacts/`. Script kiểm tra tương tác, giao diện máy tính/điện thoại và tình huống mất nguồn dữ liệu; thời tiết dùng fixture kiểm thử. Nếu không tự tìm thấy trình duyệt, đặt đường dẫn trước khi chạy:
 
-## Những gì CHƯA thể kết luận
+```powershell
+$env:CHROME_PATH = 'C:\Program Files\Google\Chrome\Application\chrome.exe'
+npm run test:browser
+```
 
-Chưa có mô hình AI được huấn luyện, bản đồ phạm vi/độ sâu ngập, ranh giới phường đã xác minh hoặc hệ thống cảnh báo vận hành. Không hiển thị độ chính xác hay xác suất ngập khi chưa có kiểm định. Điểm tham chiếu do người phát triển chọn để đặt tên khu vực lên bản đồ, không phải tọa độ hộ di tản. Không dùng toàn bộ quận Hà Đông cũ làm ranh giới phường hiện nay.
+Các tệp chính: `public/` chứa giao diện và logic; `server.mjs` phục vụ web/API; `data/` chứa dữ liệu tham chiếu và nguồn; `scripts/` chứa công cụ vận hành; `tests/` chứa kiểm tra; `ml/README.md` hướng dẫn huấn luyện khi có dữ liệu ngập được xác minh.
 
-Mưa đại diện một ô mô hình không đủ phân giải để phân biệt nguy cơ giữa các phố. Chỉ số thử nghiệm không xét dòng chảy, địa hình hay mạng thoát nước. Copernicus DEM mới là nguồn đề xuất, chưa tải; DSM khoảng 30 m không thay thế cao độ đường/cống.
-
-## Lộ trình hoàn thiện đề tài
-
-1. Xin lớp ranh giới chính thức và xác minh phạm vi nghiên cứu trong QGIS.
-2. Xin/khảo sát cao độ, cống, trạm bơm, mặt phủ, mưa và mực nước; lưu nguồn, thời gian, hệ tọa độ và quyền sử dụng.
-3. Thu thập nhiều sự kiện độc lập: tọa độ, thời gian, độ sâu, thời gian rút và các mẫu **xác nhận không ngập**.
-4. Huấn luyện baseline và Random Forest; đánh giá theo thời gian và vị trí, precision/recall/F1, cảnh báo giả/bỏ sót; không rò rỉ sự kiện giữa các tập.
-5. Xây bộ dữ liệu dự báo theo thời điểm phát hành cho horizon 1–3 giờ, hiệu chỉnh xác suất, đánh giá báo trước. Chỉ sau đó tích hợp API AI và thống nhất ngưỡng cảnh báo với chuyên gia/địa phương.
-
-## Tệp chính
-
-`public/`: giao diện và logic; `server.mjs`: máy chủ/API; `data/`: GeoJSON tham chiếu và nguồn; `scripts/`: tải dữ liệu; `ml/`: huấn luyện; `tests/`: kiểm tra logic thiếu dữ liệu, múi giờ và cửa sổ mưa.
-
-Nguồn xem `data/sources.json`. Ghi công OpenStreetMap contributors và Open-Meteo trên web. Tuân thủ điều khoản nhà cung cấp khi triển khai rộng; không tải hàng loạt tile OSM. Đây là công cụ nghiên cứu, không thay thế thông báo của cơ quan chức năng.
-
-## Cập nhật trải nghiệm dự báo
-
-Chọn biểu đồ 6/12/24 giờ, xem tổng mưa và giờ mưa lớn nhất, xuất CSV theo khoảng đang chọn, in/lưu PDF bằng trình duyệt. Có thể nạp giờ mưa dự báo lớn nhất vào kịch bản thử nghiệm; chỉ số vẫn chưa phải mô hình AI đã kiểm định. Dữ liệu tự cập nhật mỗi 15 phút khi tab đang hiển thị. API dùng chung một yêu cầu nguồn cho các lượt truy cập đồng thời.
-
-Chạy toàn bộ kiểm tra: `node --test tests/*.test.mjs`.
+Tải dữ liệu nghiên cứu bằng `node scripts/download-data.mjs`. Để phát triển thành mô hình dự báo, cần xác minh phạm vi nghiên cứu, khảo sát địa hình/thoát nước, thu thập nhiều sự kiện ngập và không ngập độc lập, rồi đánh giá theo thời gian và vị trí trước khi công bố độ chính xác hoặc ngưỡng cảnh báo.

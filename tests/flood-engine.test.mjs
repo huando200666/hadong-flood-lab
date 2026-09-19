@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync, rmdirSync, writeFileSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -79,16 +82,31 @@ test('getAvoidanceRoutes provides regular and safe alternative routes', () => {
   assert.ok(routes.safe_route.path.length >= 3);
 });
 
-test('saveReport and loadReports maintain valid community reports', () => {
-  const initialCount = loadReports().length;
-  const saved = saveReport({
-    reporter_name: 'Test Citizen',
-    location_name: 'Đường Quang Trung',
-    depth_cm: 28,
-    description: 'Ngập nhẹ lối vào ga'
-  });
-  assert.ok(saved.id.startsWith('rep-'));
-  const updated = loadReports();
-  assert.equal(updated.length, initialCount + 1);
+test('reports persist as unverified without modifying project data', () => {
+  const dir=mkdtempSync(path.join(tmpdir(),'flood-report-test-'));
+  try {
+    const file=path.join(dir,'reports.json');
+    const saved=saveReport({reporter_name:'Test Citizen',location_name:'Đường Quang Trung',depth_cm:28,depth_level:'medium',description:'Ngập nhẹ lối vào ga'},file);
+    assert.ok(saved.id.startsWith('rep-'));
+    assert.equal(saved.status,'unverified');
+    assert.equal(saved.votes,0);
+    assert.equal(saved.coordinates,null);
+    assert.equal(loadReports(file).length,1);
+  } finally { rmSync(path.join(dir,'reports.json'),{force:true}); rmdirSync(dir); }
+});
+test('unknown locations do not fall back to an unrelated site', () => {
+  assert.equal(searchLocationRisk('zzzz nonexistent road'),null);
+  assert.equal(searchLocationRisk('     '),null);
+});
+test('zero rain produces zero depth in a scenario', () => {
+  assert.ok(getAiForecast('+1h',0).predictions.every(p=>p.depth_max_cm===0));
 });
 
+test('damaged report storage is never overwritten by a new submission',()=>{
+ const dir=mkdtempSync(path.join(tmpdir(),'flood-report-corrupt-')),file=path.join(dir,'reports.json');
+ try{
+  writeFileSync(file,'truncated JSON');
+  assert.throws(()=>saveReport({reporter_name:'Test',location_name:'Văn Quán',depth_cm:25,depth_level:'medium'},file));
+  assert.equal(readFileSync(file,'utf8'),'truncated JSON');
+ }finally{rmSync(file,{force:true});rmdirSync(dir);}
+});

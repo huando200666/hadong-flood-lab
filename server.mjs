@@ -1,165 +1,103 @@
 import http from 'node:http';
-import { createWeatherCache } from './weather-cache.mjs';
-import {
-  loadGisData,
-  loadReports,
-  saveReport,
-  getAiForecast,
-  getEarlyAlerts,
-  getDashboardData,
-  getTimelineSimulation,
-  searchLocationRisk,
-  getAvoidanceRoutes,
-  getActionableSolutions
-} from './flood-engine.mjs';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-
-const root = path.dirname(fileURLToPath(import.meta.url));
-const types = {
-  '.html': 'text/html; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.js': 'text/javascript; charset=utf-8',
-  '.json': 'application/json; charset=utf-8',
-  '.geojson': 'application/geo+json; charset=utf-8',
-  '.png': 'image/png',
-  '.svg': 'image/svg+xml'
-};
-
-const getWeather = createWeatherCache();
-
-const server = http.createServer(async (req, res) => {
+import { createWeatherCache } from './weather-cache.mjs';
+import { loadGisData, loadReports, saveReport, getAiForecast, getEarlyAlerts, getDashboardData, getTimelineSimulation, searchLocationRisk, getAvoidanceRoutes, getActionableSolutions } from './flood-engine.mjs';
+const root=path.dirname(fileURLToPath(import.meta.url));
+const types={'.html':'text/html; charset=utf-8','.css':'text/css; charset=utf-8','.js':'text/javascript; charset=utf-8','.json':'application/json; charset=utf-8','.geojson':'application/geo+json; charset=utf-8','.png':'image/png','.svg':'image/svg+xml'};
+const getWeather=createWeatherCache();
+const server=http.createServer(async(req,res)=>{
+  const sendJson=(data,code=200)=>{
+    res.writeHead(code,{'Content-Type':types['.json'],'X-Content-Type-Options':'nosniff','Cache-Control':'no-store'});
+    res.end(req.method==='HEAD'?undefined:JSON.stringify(data));
+  };
   try {
-    const url = new URL(req.url, 'http://localhost');
-
-    // CORS & JSON helper
-    const sendJson = (data, code = 200) => {
-      res.writeHead(code, {
-        'Content-Type': types['.json'],
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type'
-      });
-      res.end(JSON.stringify(data));
-    };
-
-    if (req.method === 'OPTIONS') {
-      res.writeHead(204, {
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type'
-      });
-      return res.end();
-    }
-
-    // Weather endpoint (existing)
-    if (url.pathname === '/api/weather') {
-      if (!['GET', 'HEAD'].includes(req.method)) { res.writeHead(405); return res.end(); }
-      const data = await getWeather();
-      return sendJson(data);
-    }
-
-    // GIS Layers & Sites
-    if (url.pathname === '/api/flood-data') {
-      const data = loadGisData();
-      return sendJson(data);
-    }
-
-    // AI Forecast (+30m, +1h, +2h, +3h)
-    if (url.pathname === '/api/ai-forecast') {
-      const horizon = url.searchParams.get('horizon') || '+1h';
-      const rain = Number(url.searchParams.get('rain')) || 35;
-      const data = getAiForecast(horizon, rain);
-      return sendJson(data);
-    }
-
-    // Dashboard management metrics & time-series
-    if (url.pathname === '/api/dashboard') {
-      const rain = Number(url.searchParams.get('rain')) || 35;
-      const data = getDashboardData(rain);
-      return sendJson(data);
-    }
-
-    // Early Alerts
-    if (url.pathname === '/api/alerts') {
-      const rain = Number(url.searchParams.get('rain')) || 38;
-      const data = getEarlyAlerts(rain);
-      return sendJson(data);
-    }
-
-    // Timeline simulation (14:00 -> 18:00)
-    if (url.pathname === '/api/timeline') {
-      const data = getTimelineSimulation();
-      return sendJson(data);
-    }
-
-    // Location search & risk lookup
-    if (url.pathname === '/api/search') {
-      const q = url.searchParams.get('q') || 'Nguyễn Trãi, Hà Đông';
-      const data = searchLocationRisk(q);
-      return sendJson(data);
-    }
-
-    // Smart avoidance routing
-    if (url.pathname === '/api/routing') {
-      const from = url.searchParams.get('from') || 'Bệnh viện 103';
-      const to = url.searchParams.get('to') || 'KĐT Văn Phú';
-      const data = getAvoidanceRoutes(from, to);
-      return sendJson(data);
-    }
-
-    // Community Reports
-    if (url.pathname === '/api/community-reports') {
-      if (req.method === 'GET') {
-        return sendJson(loadReports());
+    const url=new URL(req.url,'http://localhost');
+    if(url.pathname.startsWith('/api/')){
+      const isReport=url.pathname==='/api/community-reports';
+      if(!['GET','HEAD'].includes(req.method)&&!(isReport&&req.method==='POST')){
+        res.setHeader('Allow',isReport?'GET, HEAD, POST':'GET, HEAD');
+        return sendJson({error:'Phương thức không được hỗ trợ.'},405);
       }
-      if (req.method === 'POST') {
-        let body = '';
-        req.on('data', chunk => { body += chunk; });
-        req.on('end', () => {
-          try {
-            const report = JSON.parse(body || '{}');
-            const saved = saveReport(report);
-            return sendJson({ success: true, report: saved }, 201);
-          } catch (e) {
-            return sendJson({ error: 'Dữ liệu báo cáo không hợp lệ' }, 400);
+      const rainParam=url.searchParams.get('rain');
+      const rain=rainParam===null?35:Number(rainParam);
+      if(rainParam!==null&&(!rainParam.trim()||!Number.isFinite(rain)||rain<0||rain>200))return sendJson({error:'Lượng mưa phải nằm trong khoảng 0–200 mm/h.'},400);
+      const simulated=data=>({...data,data_mode:'simulation',validated:false});
+      switch(url.pathname){
+        case '/api/health':return sendJson({app:'hadong-flood-lab',version:2});
+        case '/api/weather':return sendJson(await getWeather());
+        case '/api/flood-data':return sendJson({...loadGisData(),data_mode:'reference'});
+        case '/api/ai-forecast':{
+          const horizon=url.searchParams.get('horizon')||'+1h';
+          if(!['+30m','+1h','+2h','+3h'].includes(horizon))return sendJson({error:'Khoảng mô phỏng không hợp lệ.'},400);
+          const forecast=getAiForecast(horizon,rain);
+          forecast.average_confidence_pct=null;
+          forecast.top_hotspot.confidence_pct=null;
+          forecast.predictions.forEach(p=>{p.confidence_pct=null;});
+          return sendJson(simulated(forecast));
+        }
+        case '/api/dashboard':return sendJson(simulated(getDashboardData(rain)));
+        case '/api/alerts':return sendJson(simulated(getEarlyAlerts(rain)));
+        case '/api/timeline':return sendJson(simulated(getTimelineSimulation()));
+        case '/api/search':{
+          const q=(url.searchParams.get('q')||'').trim();
+          if(q.length<2||q.length>160)return sendJson({error:'Nhập tên địa điểm từ 2 đến 160 ký tự.'},400);
+          const horizon=url.searchParams.get('horizon')||'+1h';
+          if(!['+30m','+1h','+2h','+3h'].includes(horizon))return sendJson({error:'Khoảng mô phỏng không hợp lệ.'},400);
+          const result=searchLocationRisk(q,rain,horizon);
+          if(!result)return sendJson({error:'Không tìm thấy địa điểm.'},404);
+          return sendJson(simulated({...result,confidence_pct:null}));
+        }
+        case '/api/routing':{
+          const from=url.searchParams.get('from')||'Bệnh viện 103',to=url.searchParams.get('to')||'KĐT Văn Phú';
+          if(!/103/.test(from)||!/văn phú|van phu/i.test(to))return sendJson({error:'Chỉ có tuyến mẫu Bệnh viện 103 → KĐT Văn Phú.'},422);
+          return sendJson(simulated(getAvoidanceRoutes(from,to)));
+        }
+        case '/api/solutions':return sendJson({items:getActionableSolutions(),data_mode:'simulation',validated:false});
+        case '/api/community-reports':{
+          if(req.method!=='POST')return sendJson(loadReports().map(r=>({...r,status:'unverified',votes:0})));
+          if(req.headers.origin&&req.headers.origin!==new URL(req.url,'http://'+req.headers.host).origin)return sendJson({error:'Nguồn gửi không được hỗ trợ.'},403);
+          if(!(req.headers['content-type']||'').startsWith('application/json'))return sendJson({error:'Nội dung phải là JSON.'},415);
+          const max=2*1024*1024;
+          if(Number(req.headers['content-length'])>max)return sendJson({error:'Báo cáo quá lớn.'},413);
+          let size=0;const chunks=[];
+          for await(const chunk of req){
+            size+=chunk.length;
+            if(size>max){sendJson({error:'Báo cáo quá lớn.'},413);return;}
+            chunks.push(chunk);
           }
-        });
-        return;
+          let report;
+          try{report=JSON.parse(Buffer.concat(chunks).toString('utf8'));}
+          catch{return sendJson({error:'JSON không hợp lệ.'},400);}
+          try{return sendJson({success:true,report:saveReport(report)},201);}
+          catch(error){return sendJson({error:error.code?'Không lưu được báo cáo.':error.message},error.code?500:400);}
+        }
+        default:return sendJson({error:'Không tìm thấy API.'},404);
       }
     }
-
-    // Actionable response proposals
-    if (url.pathname === '/api/solutions') {
-      const rain = Number(url.searchParams.get('rain')) || 35;
-      const data = getActionableSolutions(rain);
-      return sendJson(data);
-    }
-
-    // Static file serving
-    if (!['GET', 'HEAD'].includes(req.method)) { res.writeHead(405); return res.end(); }
-    let name = decodeURIComponent(url.pathname);
-    if (name === '/') name = '/index.html';
-    const isData = name.startsWith('/data/');
-    const base = path.join(root, isData ? 'data' : 'public');
-    const relativeName = isData ? name.slice('/data'.length) : name;
-    const target = path.resolve(base, '.' + relativeName);
-    if (!target.startsWith(base + path.sep)) { res.writeHead(403); return res.end(); }
-    const content = await readFile(target);
-    res.writeHead(200, {
-      'Content-Type': types[path.extname(target)] || 'application/octet-stream',
-      'X-Content-Type-Options': 'nosniff'
-    });
-    res.end(req.method === 'HEAD' ? undefined : content);
-  } catch (error) {
-    const isApi = req.url.startsWith('/api/');
-    res.writeHead(isApi ? 502 : 404, { 'Content-Type': 'application/json; charset=utf-8' });
-    res.end(JSON.stringify({ error: isApi ? 'Lỗi máy chủ API hoặc dịch vụ không phản hồi.' : 'Không tìm thấy tài nguyên.' }));
+    if(!['GET','HEAD'].includes(req.method)){res.setHeader('Allow','GET, HEAD');return sendJson({error:'Phương thức không được hỗ trợ.'},405);}
+    let name;
+    try{name=decodeURIComponent(url.pathname);}catch{return sendJson({error:'Đường dẫn không hợp lệ.'},400);}
+    if(name==='/')name='/index.html';
+    const data=name.startsWith('/data/'),base=path.join(root,data?'data':'public');
+    const target=path.resolve(base,'.'+(data?name.slice(5):name));
+    if(!target.startsWith(base+path.sep))return sendJson({error:'Không được truy cập.'},403);
+    const content=await readFile(target);
+    res.writeHead(200,{'Content-Type':types[path.extname(target)]||'application/octet-stream','X-Content-Type-Options':'nosniff','Cache-Control':'no-cache'});
+    res.end(req.method==='HEAD'?undefined:content);
+  }catch(error){
+    if(res.headersSent){res.end();return;}
+    const api=req.url.startsWith('/api/');
+    sendJson({error:api?'Dịch vụ dữ liệu chưa phản hồi. Vui lòng thử lại.':'Không tìm thấy tài nguyên.'},api?502:404);
   }
 });
-
-const port = Number(process.env.PORT) || 3000;
-const host = process.env.HOST || '127.0.0.1';
-server.listen(port, host, () => console.log(`Hà Đông Flood Lab listening on ${host}:${port}`));
+server.requestTimeout=30000;
+server.headersTimeout=15000;
+if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){
+  const port=process.env.PORT===undefined?3000:Number(process.env.PORT);
+  const host=process.env.HOST||'127.0.0.1';
+  server.on('error',error=>{console.error(error.code==='EADDRINUSE'?'Cổng đang được sử dụng. Hãy mở web đang chạy hoặc đổi PORT.':error.message);process.exitCode=1;});
+  server.listen(port,host,()=>console.log('Hà Đông Flood Lab: http://'+host+':'+server.address().port));
+}
 export default server;

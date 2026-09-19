@@ -1,10 +1,12 @@
+import { randomUUID } from 'node:crypto';
+import { matchLocation, validateReport } from './public/app-utils.js';
 /**
  * Flood Intelligence Engine for Hà Đông Flood Lab
  * Provides AI prediction, risk assessment, early warning thresholds,
  * timeline simulations, safe routing, and automated response recommendations.
  */
 
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, renameSync, unlinkSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -19,31 +21,31 @@ export function loadGisData() {
   return { sites, layers };
 }
 
-export function loadReports() {
+export function loadReports(file = reportsPath) {
   try {
-    return JSON.parse(readFileSync(reportsPath, 'utf8'));
-  } catch {
-    return [];
+    const reports=JSON.parse(readFileSync(file,'utf8'));
+    if(!Array.isArray(reports))throw new Error('Invalid report storage.');
+    return reports;
+  } catch(error) {
+    if(error.code==='ENOENT')return [];
+    const failure=new Error('Không đọc được dữ liệu báo cáo hiện tại; tệp được giữ nguyên.');
+    failure.code='INVALID_REPORT_STORAGE';
+    throw failure;
   }
 }
 
-export function saveReport(report) {
-  const reports = loadReports();
-  const newReport = {
-    id: 'rep-' + Date.now().toString(36),
-    reporter_name: report.reporter_name || 'Người dân Hà Đông',
-    location_name: report.location_name || 'Khu vực Hà Đông',
-    coordinates: report.coordinates || [105.78, 20.97],
-    depth_level: report.depth_level || 'medium',
-    depth_cm: Number(report.depth_cm) || 25,
-    photo_url: report.photo_url || '',
-    description: report.description || '',
-    reported_at: new Date().toISOString(),
-    status: 'verified',
-    votes: 1
-  };
+export function saveReport(report, file = reportsPath) {
+  const validated=validateReport(report);
+  const reports=loadReports(file);
+  const newReport={...validated,id:'rep-'+randomUUID(),reported_at:new Date().toISOString(),status:'unverified',votes:0};
   reports.unshift(newReport);
-  writeFileSync(reportsPath, JSON.stringify(reports, null, 2), 'utf8');
+  const temporary=file+'.'+randomUUID()+'.tmp';
+  try {
+    writeFileSync(temporary,JSON.stringify(reports,null,2),'utf8');
+    renameSync(temporary,file);
+  } finally {
+    if(existsSync(temporary))unlinkSync(temporary);
+  }
   return newReport;
 }
 
@@ -75,9 +77,9 @@ export function getAiForecast(horizon = '+1h', currentRainRate = 35) {
     const elevationPenalty = Math.max(0, (6.2 - p.elevation_m) * 4.5);
     const rainImpact = (currentRainRate / 30) * horizonMultiplier.rainFactor;
 
-    let predictedDepth = Math.round(baseDepth * horizonMultiplier.depthFactor * rainImpact + elevationPenalty);
+    let predictedDepth = Math.round((baseDepth * horizonMultiplier.depthFactor + elevationPenalty) * rainImpact);
     predictedDepth = Math.min(predictedDepth, Math.round(historicalMax * 1.05));
-    predictedDepth = Math.max(5, predictedDepth);
+    predictedDepth = Math.max(0, predictedDepth);
 
     const minDepth = Math.max(0, predictedDepth - Math.round(predictedDepth * 0.15));
     const maxDepth = predictedDepth + Math.round(predictedDepth * 0.15);
@@ -337,19 +339,11 @@ export function getTimelineSimulation() {
  * Address / Location lookup
  * Matches queries like "Nguyễn Trãi, Hà Đông", "Trần Phú", "Văn Quán", "Ba La", etc.
  */
-export function searchLocationRisk(queryStr) {
+export function searchLocationRisk(queryStr, rainRate = 35, horizon = '+1h') {
   if (!queryStr || typeof queryStr !== 'string') return null;
-  const q = queryStr.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
-  const { sites } = loadGisData();
-  const forecast = getAiForecast('+1h', 38);
-
-  const matchedSite = forecast.predictions.find(p => {
-    const nameNorm = p.name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-    const streetNorm = p.street.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-    const wardNorm = p.ward.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-    return nameNorm.includes(q) || streetNorm.includes(q) || wardNorm.includes(q) || q.includes(nameNorm) || q.includes(streetNorm);
-  }) || forecast.predictions[0]; // fallback to top representative
-
+  const forecast = getAiForecast(horizon, rainRate);
+  const matchedSite = matchLocation(forecast.predictions, queryStr);
+  if (!matchedSite) return null;
   return {
     query: queryStr,
     matched_location: matchedSite.name,
