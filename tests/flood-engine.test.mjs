@@ -11,6 +11,9 @@ import {
   getTimelineSimulation,
   searchLocationRisk,
   getAvoidanceRoutes,
+  getAiRain24hAnalysis,
+  getActionableSolutions,
+  ROUTE_PRESETS,
   loadReports,
   saveReport
 } from '../flood-engine.mjs';
@@ -110,3 +113,72 @@ test('damaged report storage is never overwritten by a new submission',()=>{
   assert.equal(readFileSync(file,'utf8'),'truncated JSON');
  }finally{rmSync(file,{force:true});rmdirSync(dir);}
 });
+
+test('getAvoidanceRoutes supports multiple presets across Ha Dong', () => {
+  assert.ok(ROUTE_PRESETS.route_1 && ROUTE_PRESETS.route_2 && ROUTE_PRESETS.route_3 && ROUTE_PRESETS.route_4);
+  const r2 = getAvoidanceRoutes('route_2');
+  assert.equal(r2.id, 'route_2');
+  assert.ok(r2.regular_route.is_flooded);
+  assert.ok(!r2.safe_route.is_flooded);
+
+  const r3 = getAvoidanceRoutes('KĐT Dương Nội', 'Cầu Trắng');
+  assert.equal(r3.id, 'route_3');
+  assert.ok(r3.safe_route.recommendation.includes('Vạn Phúc'));
+
+  const r4 = getAvoidanceRoutes('KĐT Mộ Lao', 'Ngã ba Ba La');
+  assert.equal(r4.id, 'route_4');
+  assert.ok(r4.regular_route.flood_spots.some(s => s.name.includes('Ba La')));
+});
+
+test('getAiRain24hAnalysis assesses upcoming 24h precipitation and traffic impact', () => {
+  const mockNow = new Date('2026-09-21T12:00:00+07:00').getTime();
+  const times = [];
+  const precip = [];
+  const prob = [];
+  for (let i = 0; i < 30; i++) {
+    const d = new Date(mockNow + i * 3600000);
+    times.push(d.toISOString());
+    precip.push(i === 3 ? 32.5 : i === 4 ? 12.0 : 0);
+    prob.push(i === 3 ? 85 : i === 4 ? 60 : 10);
+  }
+  const weather = { hourly: { time: times, precipitation: precip, precipitation_probability: prob } };
+  const res = getAiRain24hAnalysis(weather, mockNow);
+  assert.equal(res.available, true);
+  assert.equal(res.will_rain, true);
+  assert.ok(res.total_rain_mm >= 44.5);
+  assert.equal(res.max_prob_pct, 85);
+  assert.equal(res.flood_risk_level, 'critical');
+  assert.ok(res.ai_summary.includes('AI cảnh báo'));
+  assert.ok(res.traffic_advisory.includes('CẢNH BÁO GIAO THÔNG'));
+  assert.equal(res.periods.length, 3);
+
+  // Dry weather test
+  const dryWeather = {
+    hourly: {
+      time: times,
+      precipitation: times.map(() => 0),
+      precipitation_probability: times.map(() => 5)
+    }
+  };
+  const dryRes = getAiRain24hAnalysis(dryWeather, mockNow);
+  assert.equal(dryRes.will_rain, false);
+  assert.equal(dryRes.total_rain_mm, 0);
+  assert.equal(dryRes.flood_risk_level, 'safe');
+  assert.ok(dryRes.status_title.includes('KHÔNG MƯA'));
+
+  // Fallback for null data
+  const nullRes = getAiRain24hAnalysis(null);
+  assert.equal(nullRes.available, false);
+  assert.equal(nullRes.will_rain, false);
+});
+
+test('getActionableSolutions provides 4 comprehensive categories', () => {
+  const solutions = getActionableSolutions(40);
+  assert.equal(solutions.length, 4);
+  assert.ok(solutions.some(s => s.category.includes('Cảnh báo nhân dân')));
+  assert.ok(solutions.some(s => s.category.includes('Vận hành hạ tầng')));
+  assert.ok(solutions.some(s => s.category.includes('Điều phối giao thông')));
+  assert.ok(solutions.some(s => s.category.includes('Giải pháp công trình')));
+  assert.ok(solutions.every(s => s.actions && s.actions.length >= 3));
+});
+

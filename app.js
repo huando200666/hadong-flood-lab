@@ -1,4 +1,4 @@
-import { loadGisData, loadReports, saveReport, importReports, fetchWeatherDirect, getAiForecast, getTimelineSimulation, getAvoidanceRoutes, RISK_COLORS, RISK_LABELS } from './flood-engine.js';
+import { loadGisData, loadReports, saveReport, importReports, fetchWeatherDirect, getAiForecast, getTimelineSimulation, getAvoidanceRoutes, getAiRain24hAnalysis, getActionableSolutions, ROUTE_PRESETS, RISK_COLORS, RISK_LABELS } from './flood-engine.js';
 import { normalizeSearch, matchLocation, escapeHtml as esc, safePhoto, summarizeRain, scenarioAlert } from './app-utils.js';
 import { futureHours } from './risk.js';
 const $ = id => document.getElementById(id);
@@ -205,6 +205,7 @@ async function updateScenario() {
     renderLocations();
     renderRainLayer();
     updateMapAlertHud();
+    renderSolutions();
     if(state.selected){const selected=sites.find(s=>s.id===state.selected);if(selected)focusSite(selected,false);}
   } catch(error){$('scenario-top').textContent='Không tải được kịch bản';$('location-list').innerHTML=empty('Không tải được địa điểm','Nhấn Cập nhật dữ liệu để thử lại.');throw error;}
 }
@@ -251,6 +252,166 @@ function renderWeather() {
     chart.append(col);
   });
   $('rain-table-body').innerHTML=rows.map(row=>'<tr><td>'+esc(row.time.replace('T',' '))+'</td><td>'+(row.rain===null?'Thiếu dữ liệu':row.rain)+'</td></tr>').join('');
+  renderAi24hRain();
+}
+function renderAi24hRain() {
+  const card = $('ai-24h-rain-card');
+  if (!card) return;
+  const analysis = getAiRain24hAnalysis(state.weather);
+  const tag = $('ai-rain-tag');
+  if (tag) {
+    tag.textContent = analysis.intensity_label;
+    tag.className = 'ai-status-pill ' + (analysis.will_rain ? 'rain' : 'dry');
+  }
+  const title = $('ai-rain-title');
+  if (title) title.textContent = analysis.status_title;
+  const desc = $('ai-rain-desc');
+  if (desc) desc.textContent = analysis.ai_summary;
+  
+  if ($('ai-rain-total')) $('ai-rain-total').textContent = analysis.total_rain_mm + ' mm';
+  if ($('ai-rain-prob')) $('ai-rain-prob').textContent = analysis.max_prob_pct + '%';
+  if ($('ai-rain-peak')) $('ai-rain-peak').textContent = analysis.peak_window;
+  if ($('ai-rain-risk')) {
+    $('ai-rain-risk').textContent = analysis.flood_risk_level === 'critical' ? '🔴 Cực kỳ cao' : analysis.flood_risk_level === 'high' ? '🟠 Cao' : analysis.flood_risk_level === 'moderate' ? '🟡 Trung bình' : '🟢 Thấp / An toàn';
+  }
+  
+  const periodsContainer = $('ai-periods-container');
+  if (periodsContainer) {
+    periodsContainer.innerHTML = analysis.periods.map(p => `
+      <div class="ai-period-card ${p.rain_mm > 0 ? 'has-rain' : ''}">
+        <div class="period-header">
+          <span class="period-name">${esc(p.name)}</span>
+          <span class="period-icon">${p.icon}</span>
+        </div>
+        <div class="period-stats">
+          <span>${p.rain_mm} mm</span>
+          <small>Xác suất ${p.prob_pct}%</small>
+        </div>
+        <p class="period-desc">${esc(p.desc)}</p>
+      </div>
+    `).join('');
+  }
+  
+  if ($('ai-traffic-text')) {
+    $('ai-traffic-text').textContent = analysis.traffic_advisory;
+  }
+}
+function renderSolutions() {
+  const grid = $('solutions-grid');
+  if (!grid) return;
+  const solutions = getActionableSolutions(state.rain);
+  grid.innerHTML = solutions.map(s => `
+    <article class="solution-card">
+      <div class="solution-header">
+        <div class="solution-title-group">
+          <span class="solution-icon">${s.icon}</span>
+          <h3 class="solution-category">${esc(s.category)}</h3>
+        </div>
+        <span class="solution-priority-pill" style="background:${s.color}">${esc(s.priority)}</span>
+      </div>
+      <ul class="solution-actions-list">
+        ${s.actions.map(a => `<li>${esc(a)}</li>`).join('')}
+      </ul>
+    </article>
+  `).join('');
+}
+function renderAvoidanceRouting(presetKey = 'route_1') {
+  const routes = getAvoidanceRoutes(presetKey);
+  const container = $('ai-route-comparison');
+  if (!container) return;
+  
+  container.innerHTML = `
+    <div class="route-card regular">
+      <div class="route-card-header">
+        <span class="route-type-badge warning">⚠ Tuyến truyền thống</span>
+        <span class="small-text muted">${routes.regular_route.distance_km} km</span>
+      </div>
+      <h4 class="route-title">${esc(routes.regular_route.name)}</h4>
+      <div class="route-stats-row">
+        <span class="route-stat-item">Thời gian: <b>${routes.regular_route.duration_min} phút</b></span>
+        <span class="route-stat-item">Trạng thái: <b style="color:#dc2626">Ngập sâu</b></span>
+      </div>
+      <p class="route-notice" style="color:#b91c1c"><b>${esc(routes.regular_route.warning_msg)}</b></p>
+      <div class="small-text" style="color:#7f1d1d;font-weight:600;margin-top:6px">Điểm ngập trên tuyến:</div>
+      <div class="route-spots-list">
+        ${(routes.regular_route.flood_spots || []).map(sp => `<span class="route-spot-pill">📍 ${esc(sp.name)} (${esc(sp.depth)})</span>`).join('')}
+      </div>
+    </div>
+
+    <div class="route-card safe">
+      <div class="route-card-header">
+        <span class="route-type-badge safe">✔ Tuyến tránh ngập AI</span>
+        <span class="small-text muted">${routes.safe_route.distance_km} km</span>
+      </div>
+      <h4 class="route-title">${esc(routes.safe_route.name)}</h4>
+      <div class="route-stats-row">
+        <span class="route-stat-item">Thời gian: <b>${routes.safe_route.duration_min} phút</b></span>
+        <span class="route-stat-item">Trạng thái: <b style="color:#16a34a">Khô ráo / An toàn</b></span>
+      </div>
+      <p class="route-notice" style="color:#15803d"><b>${esc(routes.safe_route.recommendation)}</b></p>
+      <div class="small-text" style="color:#166534;margin-top:6px">${esc(routes.safe_route.elevation_status)}</div>
+    </div>
+  `;
+}
+function drawAvoidanceRoutesOnMap(presetKey = 'route_1') {
+  if (!map || !layers.routing) return;
+  const routes = getAvoidanceRoutes(presetKey);
+  layers.routing.clearLayers();
+  const points = [];
+  
+  const regCoords = routes.regular_route.path.map(c => [c[1], c[0]]);
+  points.push(...regCoords);
+  L.polyline(regCoords, {
+    color: '#dc2626',
+    weight: 5,
+    dashArray: '8 6',
+    opacity: 0.85
+  }).bindTooltip('<b>Tuyến truyền thống (Ngập úng)</b><br>' + esc(routes.regular_route.name)).addTo(layers.routing);
+  
+  (routes.regular_route.flood_spots || []).forEach(sp => {
+    const midIdx = Math.floor(regCoords.length / 2);
+    const spotCoord = regCoords[midIdx] || regCoords[0];
+    L.circleMarker(spotCoord, {
+      radius: 8,
+      color: '#fff',
+      weight: 2,
+      fillColor: '#dc2626',
+      fillOpacity: 1
+    }).bindPopup('<b>⚠️ Điểm ngập: ' + esc(sp.name) + '</b><br>Độ sâu: ' + esc(sp.depth) + '<br>Rủi ro: ' + esc(sp.risk)).addTo(layers.routing);
+  });
+  
+  const safeCoords = routes.safe_route.path.map(c => [c[1], c[0]]);
+  points.push(...safeCoords);
+  L.polyline(safeCoords, {
+    color: '#10b981',
+    weight: 5,
+    opacity: 0.95
+  }).bindTooltip('<b>Tuyến tránh ngập an toàn (AI Đề xuất)</b><br>' + esc(routes.safe_route.name)).addTo(layers.routing);
+  
+  if (safeCoords.length >= 2) {
+    const startPt = safeCoords[0];
+    const endPt = safeCoords[safeCoords.length - 1];
+    L.circleMarker(startPt, {
+      radius: 8,
+      color: '#fff',
+      weight: 2,
+      fillColor: '#2563eb',
+      fillOpacity: 1
+    }).bindPopup('<b>Điểm xuất phát</b><br>' + esc(routes.origin)).addTo(layers.routing);
+    
+    L.circleMarker(endPt, {
+      radius: 8,
+      color: '#fff',
+      weight: 2,
+      fillColor: '#059669',
+      fillOpacity: 1
+    }).bindPopup('<b>Điểm đến</b><br>' + esc(routes.destination)).addTo(layers.routing);
+  }
+  
+  scrollMap();
+  map.fitBounds(points, { padding: [35, 35] });
+  $('map-status').textContent = 'Lộ trình tránh ngập AI: ' + routes.origin + ' → ' + routes.destination;
+  notify('Đã vẽ lộ trình tránh ngập AI trên bản đồ.');
 }
 async function loadWeather(force=false) {
   $('weather-status').textContent='Đang cập nhật dự báo Open-Meteo…';$('retry-weather').hidden=true;
@@ -382,13 +543,24 @@ function setupTimeline(){
   };
   $('timeline-show').onclick=()=>{if(!map){notify('Bản đồ chưa khả dụng.',true);return;}updateTimeline(true);scrollMap();};
   $('timeline-clear').onclick=()=>{stopTimeline();layers.timeline?.clearLayers();$('map-status').textContent='Bản đồ tham chiếu · Chưa phải dữ liệu ngập hiện tại';};
+  if ($('route-preset-select')) {
+    $('route-preset-select').onchange = (e) => {
+      renderAvoidanceRouting(e.target.value);
+      if (layers.routing && layers.routing.getLayers().length > 0) {
+        drawAvoidanceRoutesOnMap(e.target.value);
+      }
+    };
+  }
   $('route-show').onclick=()=>{
     if(!map){notify('Bản đồ chưa khả dụng.',true);return;}
-    const routes=getAvoidanceRoutes('Bệnh viện 103','KĐT Văn Phú');layers.routing.clearLayers();const points=[];
-    [routes.regular_route,routes.safe_route].forEach((route,i)=>{const coords=route.path.map(c=>[c[1],c[0]]);points.push(...coords);L.polyline(coords,{color:i?'#387e61':'#c38c63',weight:4,dashArray:i?null:'7 6'}).bindTooltip('Tuyến mẫu '+(i?'B':'A')+' · Chưa xác nhận lưu thông').addTo(layers.routing);});
-    scrollMap();map.fitBounds(points,{padding:[30,30]});$('map-status').textContent='Hai tuyến minh họa · Không phải chỉ dẫn đường thực tế';
+    const presetKey = $('route-preset-select')?.value || 'route_1';
+    drawAvoidanceRoutesOnMap(presetKey);
   };
-  $('route-clear').onclick=()=>{layers.routing?.clearLayers();$('map-status').textContent='Đã ẩn các tuyến mẫu.';};
+  $('route-clear').onclick=()=>{
+    layers.routing?.clearLayers();
+    $('map-status').textContent='Đã ẩn các tuyến mẫu.';
+    notify('Đã ẩn các tuyến trên bản đồ.');
+  };
 }
 async function refresh(force=false){
   if(state.refresh)return state.refresh;
@@ -494,4 +666,4 @@ function setupEvents(){
   const clock=()=>{$('clock').textContent=new Date().toLocaleDateString('vi-VN',{timeZone:'Asia/Bangkok',weekday:'short',day:'2-digit',month:'2-digit',year:'numeric'});};clock();setInterval(clock,60000);
   setInterval(()=>{if(!document.hidden&&navigator.onLine)refresh();},WEATHER_REFRESH_MS);
 }
-restore();setupNavigation();setupEvents();setupReport();setupTimeline();refresh();
+restore();setupNavigation();setupEvents();setupReport();setupTimeline();renderAvoidanceRouting('route_1');renderSolutions();refresh();

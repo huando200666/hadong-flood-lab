@@ -363,16 +363,12 @@ export function searchLocationRisk(queryStr, rainRate = 35, horizon = '+1h') {
   };
 }
 
-/**
- * Smart Avoidance Routing:
- * Calculates standard route (passing flooded spots) vs safe alternative route
- */
-export function getAvoidanceRoutes(originName = 'Bệnh viện 103 (Phùng Hưng)', destName = 'KĐT Văn Phú (Hà Đông)') {
-  // Scenario 1: Phùng Hưng -> Văn Phú
-  // Standard passes through Phùng Hưng & Xa La ngập sâu; Safe route goes via Tô Hiệu - Cầu Trắng
-  const routeScenario = {
-    origin: originName,
-    destination: destName,
+export const ROUTE_PRESETS = {
+  route_1: {
+    id: 'route_1',
+    name: 'Tuyến 1: Bệnh viện 103 (Phùng Hưng) ⇄ KĐT Văn Phú',
+    origin: 'Bệnh viện 103 (Phùng Hưng)',
+    destination: 'KĐT Văn Phú (Hà Đông)',
     regular_route: {
       name: 'Tuyến ngắn nhất (Đường Phùng Hưng - Cầu Bươu - Xa La)',
       distance_km: 4.8,
@@ -408,9 +404,331 @@ export function getAvoidanceRoutes(originName = 'Bệnh viện 103 (Phùng Hưng
         [105.7665, 20.9548]
       ]
     }
+  },
+  route_2: {
+    id: 'route_2',
+    name: 'Tuyến 2: Ngã tư Sở / Nguyễn Trãi ⇄ Bến xe Yên Nghĩa',
+    origin: 'Ngã tư Sở (Nguyễn Trãi)',
+    destination: 'Bến xe Yên Nghĩa (Quang Trung)',
+    regular_route: {
+      name: 'Tuyến ngắn nhất (Nguyễn Trãi - Trần Phú - Quang Trung)',
+      distance_km: 9.2,
+      duration_min: 45,
+      is_flooded: true,
+      flood_spots: [
+        { name: 'Hầm chui Nguyễn Trãi - Khuất Duy Tiến', depth: '45 cm', risk: 'Rất cao' },
+        { name: 'Ngã ba Ba La', depth: '35 cm', risk: 'Rất cao' }
+      ],
+      warning_msg: 'CẢNH BÁO: Hầm chui Nguyễn Trãi và Ngã ba Ba La ngập 35–45cm, nguy cơ ngập lụt nghiêm trọng.',
+      path: [
+        [105.8150, 20.9980],
+        [105.8030, 20.9890],
+        [105.7840, 20.9740],
+        [105.7680, 20.9630],
+        [105.7520, 20.9540],
+        [105.7430, 20.9510]
+      ]
+    },
+    safe_route: {
+      name: 'Tuyến tránh ngập an toàn (Nguyễn Trãi → Tố Hữu → Lê Trọng Tấn → BX Yên Nghĩa)',
+      distance_km: 10.5,
+      duration_min: 22,
+      is_flooded: false,
+      elevation_status: 'Trục Tố Hữu - Lê Trọng Tấn thoát nước tốt, cốt nền cao, không ngập',
+      recommendation: 'Lộ trình khuyến nghị: Tránh hoàn toàn 2 điểm nghẽn Hầm chui và Ba La, tiết kiệm 23 phút di chuyển.',
+      path: [
+        [105.8150, 20.9980],
+        [105.8080, 21.0060],
+        [105.7850, 20.9850],
+        [105.7650, 20.9720],
+        [105.7480, 20.9580],
+        [105.7430, 20.9510]
+      ]
+    }
+  },
+  route_3: {
+    id: 'route_3',
+    name: 'Tuyến 3: KĐT Dương Nội ⇄ Cầu Trắng (Trung tâm Hà Đông)',
+    origin: 'KĐT Dương Nội (Tố Hữu)',
+    destination: 'Cầu Trắng (Hà Đông)',
+    regular_route: {
+      name: 'Tuyến truyền thống (Lê Trọng Tấn → Quang Trung → Cầu Trắng)',
+      distance_km: 5.1,
+      duration_min: 32,
+      is_flooded: true,
+      flood_spots: [
+        { name: 'Cầu La Khê & Nút giao Lê Trọng Tấn', depth: '30 cm', risk: 'Cao' }
+      ],
+      warning_msg: 'CẢNH BÁO: Điểm trũng Cầu La Khê dâng nước 30cm, giao thông ùn ứ.',
+      path: [
+        [105.7470, 20.9750],
+        [105.7550, 20.9660],
+        [105.7680, 20.9630],
+        [105.7780, 20.9720],
+        [105.7802, 20.9780]
+      ]
+    },
+    safe_route: {
+      name: 'Tuyến tránh ngập an toàn (Tố Hữu → Vạn Phúc → Phố Lụa → Cầu Trắng)',
+      distance_km: 4.9,
+      duration_min: 15,
+      is_flooded: false,
+      elevation_status: 'Tuyến Làng Lụa Vạn Phúc gò đồi cao ráo, hệ thống thoát nước tự nhiên tốt',
+      recommendation: 'Lộ trình khuyến nghị: Đi qua trục Vạn Phúc - Phố Lụa vừa ngắn hơn 200m vừa không ngập, tiết kiệm 17 phút di chuyển.',
+      path: [
+        [105.7470, 20.9750],
+        [105.7620, 20.9810],
+        [105.7730, 20.9820],
+        [105.7802, 20.9780]
+      ]
+    }
+  },
+  route_4: {
+    id: 'route_4',
+    name: 'Tuyến 4: KĐT Mộ Lao ⇄ Ngã ba Ba La',
+    origin: 'KĐT Mộ Lao',
+    destination: 'Ngã ba Ba La',
+    regular_route: {
+      name: 'Tuyến trực diện (Trần Phú → Quang Trung → Ba La)',
+      distance_km: 6.2,
+      duration_min: 35,
+      is_flooded: true,
+      flood_spots: [
+        { name: 'Ngã ba Ba La', depth: '35 cm', risk: 'Rất cao' }
+      ],
+      warning_msg: 'CẢNH BÁO: Khu vực ngã ba Ba La ngập 35cm, phương tiện cơ giới khó di chuyển.',
+      path: [
+        [105.7860, 20.9810],
+        [105.7780, 20.9720],
+        [105.7680, 20.9630],
+        [105.7520, 20.9540]
+      ]
+    },
+    safe_route: {
+      name: 'Tuyến tránh ngập an toàn (Mộ Lao → Tố Hữu → Lê Trọng Tấn kéo dài → Ba La)',
+      distance_km: 6.8,
+      duration_min: 18,
+      is_flooded: false,
+      elevation_status: 'Đường vành đai Tố Hữu - Lê Trọng Tấn phân lưu nhanh, nền đường cao',
+      recommendation: 'Lộ trình khuyến nghị: Tránh hoàn toàn nút ngập Ba La, di chuyển an toàn hơn.',
+      path: [
+        [105.7860, 20.9810],
+        [105.7750, 20.9860],
+        [105.7600, 20.9750],
+        [105.7480, 20.9580],
+        [105.7520, 20.9540]
+      ]
+    }
+  }
+};
+
+/**
+ * Smart Avoidance Routing:
+ * Calculates standard route (passing flooded spots) vs safe alternative route
+ */
+export function getAvoidanceRoutes(originName = 'Bệnh viện 103 (Phùng Hưng)', destName = 'KĐT Văn Phú (Hà Đông)') {
+  let presetKey = 'route_1';
+  if (originName && ROUTE_PRESETS[originName]) {
+    presetKey = originName;
+  } else if (originName || destName) {
+    const combined = `${originName || ''} ${destName || ''}`.toLowerCase();
+    if (combined.includes('yên nghĩa') || combined.includes('yen nghia') || combined.includes('ngã tư sở') || combined.includes('nga tu so')) {
+      presetKey = 'route_2';
+    } else if (combined.includes('dương nội') || combined.includes('duong noi')) {
+      presetKey = 'route_3';
+    } else if (combined.includes('mộ lao') || combined.includes('mo lao') || combined.includes('ba la')) {
+      presetKey = 'route_4';
+    } else {
+      presetKey = 'route_1';
+    }
+  }
+  const preset = ROUTE_PRESETS[presetKey];
+  return {
+    id: preset.id,
+    origin: (originName && !ROUTE_PRESETS[originName]) ? originName : preset.origin,
+    destination: destName || preset.destination,
+    regular_route: { ...preset.regular_route },
+    safe_route: { ...preset.safe_route }
+  };
+}
+
+/**
+ * AI 24-Hour Rain Analysis & Traffic Forecast
+ */
+export function getAiRain24hAnalysis(weatherData, now = Date.now()) {
+  if (!weatherData?.hourly?.time || !Array.isArray(weatherData.hourly.time)) {
+    return {
+      available: false,
+      will_rain: false,
+      total_rain_mm: 0,
+      max_prob_pct: 0,
+      intensity_label: 'Chưa có dữ liệu',
+      status_title: 'Đang kết nối dữ liệu dự báo...',
+      ai_summary: 'Chưa có dữ liệu thời tiết để phân tích dự báo 24 giờ tới.',
+      periods: [],
+      peak_window: '—',
+      traffic_advisory: 'Kiểm tra lại kết nối mạng để tải dữ liệu dự báo thời tiết.',
+      flood_risk_level: 'low'
+    };
+  }
+
+  const { time, precipitation, precipitation_probability } = weatherData.hourly;
+  const upcomingHours = [];
+  
+  for (let i = 0; i < time.length; i++) {
+    const t = time[i];
+    const itemEpoch = (t.endsWith('Z') || t.includes('+')) ? new Date(t).getTime() : new Date(t + '+07:00').getTime();
+    if (itemEpoch >= now) {
+      const rainVal = (typeof precipitation[i] === 'number' && Number.isFinite(precipitation[i]) && precipitation[i] >= 0) ? precipitation[i] : null;
+      const probVal = (Array.isArray(precipitation_probability) && typeof precipitation_probability[i] === 'number' && Number.isFinite(precipitation_probability[i])) ? precipitation_probability[i] : 0;
+      upcomingHours.push({
+        time: t,
+        hour_str: t.slice(11, 16),
+        rain: rainVal,
+        prob: probVal
+      });
+      if (upcomingHours.length === 24) break;
+    }
+  }
+
+  if (upcomingHours.length === 0) {
+    return {
+      available: false,
+      will_rain: false,
+      total_rain_mm: 0,
+      max_prob_pct: 0,
+      intensity_label: 'Thiếu dữ liệu',
+      status_title: 'Dữ liệu dự báo ngoài khung giờ',
+      ai_summary: 'Không có bản tin dự báo tương thích trong 24 giờ tới.',
+      periods: [],
+      peak_window: '—',
+      traffic_advisory: 'Vui lòng nhấn Cập nhật dữ liệu để làm mới bản tin thời tiết.',
+      flood_risk_level: 'low'
+    };
+  }
+
+  let totalRain = 0;
+  let maxRain = 0;
+  let maxRainHour = null;
+  let maxProb = 0;
+
+  upcomingHours.forEach(h => {
+    if (h.rain !== null) {
+      totalRain += h.rain;
+      if (h.rain > maxRain) {
+        maxRain = h.rain;
+        maxRainHour = h;
+      }
+    }
+    if (h.prob > maxProb) {
+      maxProb = h.prob;
+    }
+  });
+
+  totalRain = Number(totalRain.toFixed(1));
+  const willRain = Boolean(totalRain >= 0.5 || maxProb >= 40 || (maxRainHour && maxRainHour.rain >= 0.5));
+
+  let intensityLabel = 'Không mưa';
+  let floodRiskLevel = 'safe';
+  if (totalRain >= 50 || maxRain >= 30) {
+    intensityLabel = 'Mưa rất to · Nguy cơ ngập diện rộng';
+    floodRiskLevel = 'critical';
+  } else if (totalRain >= 25 || maxRain >= 15) {
+    intensityLabel = 'Mưa to dồn dập · Nguy cơ ngập cục bộ cao';
+    floodRiskLevel = 'high';
+  } else if (totalRain >= 8 || maxRain >= 5) {
+    intensityLabel = 'Mưa vừa · Xuất hiện điểm ứ đọng nước';
+    floodRiskLevel = 'moderate';
+  } else if (willRain) {
+    intensityLabel = 'Mưa nhỏ rải rác · Đường trơn ướt';
+    floodRiskLevel = 'low';
+  }
+
+  let statusTitle = '';
+  if (!willRain) {
+    statusTitle = 'Dự báo: 24h tới KHÔNG MƯA hoặc mưa không đáng kể';
+  } else if (totalRain >= 30) {
+    statusTitle = `CẢNH BÁO: 24h tới CÓ MƯA LỚN (${totalRain} mm, xác suất ${maxProb}%)`;
+  } else {
+    statusTitle = `Dự báo: 24h tới CÓ MƯA (${totalRain} mm, xác suất mưa ${maxProb}%)`;
+  }
+
+  let peakWindow = 'Không có đỉnh mưa đáng kể';
+  if (maxRainHour && maxRainHour.rain >= 1.0) {
+    peakWindow = `${maxRainHour.hour_str} (đạt ${maxRainHour.rain} mm/h)`;
+  }
+
+  const periodBuckets = {
+    morning: { rain: 0, maxProb: 0, count: 0 },
+    afternoon: { rain: 0, maxProb: 0, count: 0 },
+    night: { rain: 0, maxProb: 0, count: 0 }
   };
 
-  return routeScenario;
+  upcomingHours.forEach(h => {
+    const hourNum = parseInt(h.hour_str.split(':')[0], 10);
+    let key = 'night';
+    if (hourNum >= 6 && hourNum < 12) key = 'morning';
+    else if (hourNum >= 12 && hourNum < 18) key = 'afternoon';
+
+    if (h.rain !== null) periodBuckets[key].rain += h.rain;
+    if (h.prob > periodBuckets[key].maxProb) periodBuckets[key].maxProb = h.prob;
+    periodBuckets[key].count++;
+  });
+
+  const periods = [
+    {
+      slot: 'morning',
+      name: 'Buổi sáng (06h - 12h)',
+      icon: periodBuckets.morning.rain >= 5 ? '🌧️' : periodBuckets.morning.rain > 0 ? '🌦️' : '⛅',
+      rain_mm: Number(periodBuckets.morning.rain.toFixed(1)),
+      prob_pct: periodBuckets.morning.maxProb,
+      desc: periodBuckets.morning.rain >= 10 ? 'Nguy cơ ngập giờ cao điểm đi làm' : periodBuckets.morning.rain > 0 ? 'Mưa rải rác, đường ướt' : 'Tạnh ráo, thuận lợi'
+    },
+    {
+      slot: 'afternoon',
+      name: 'Buổi chiều (12h - 18h)',
+      icon: periodBuckets.afternoon.rain >= 5 ? '🌧️' : periodBuckets.afternoon.rain > 0 ? '🌦️' : '⛅',
+      rain_mm: Number(periodBuckets.afternoon.rain.toFixed(1)),
+      prob_pct: periodBuckets.afternoon.maxProb,
+      desc: periodBuckets.afternoon.rain >= 10 ? 'Nguy cơ ngập giờ tan tầm cao' : periodBuckets.afternoon.rain > 0 ? 'Có mưa rào cục bộ' : 'Tạnh ráo, thuận lợi'
+    },
+    {
+      slot: 'night',
+      name: 'Tối & Đêm (18h - 06h)',
+      icon: periodBuckets.night.rain >= 5 ? '🌧️' : periodBuckets.night.rain > 0 ? '🌦️' : '🌙',
+      rain_mm: Number(periodBuckets.night.rain.toFixed(1)),
+      prob_pct: periodBuckets.night.maxProb,
+      desc: periodBuckets.night.rain >= 10 ? 'Mưa đêm kéo dài, cần chú ý hầm xe' : periodBuckets.night.rain > 0 ? 'Mưa nhỏ rải rác' : 'Thời tiết khô ráo'
+    }
+  ];
+
+  let aiSummary = '';
+  let trafficAdvisory = '';
+
+  if (!willRain) {
+    aiSummary = `Hệ thống AI phân tích trong 24 giờ tới tại Hà Đông thời tiết duy trì trạng thái khô ráo, xác suất có mưa cao nhất chỉ ${maxProb}%, tổng lượng mưa ước tính 0.0 mm. Nguy cơ ngập úng mặt đường bằng 0%.`;
+    trafficAdvisory = 'Giao thông toàn quận Hà Đông thông suốt. Các phương tiện di chuyển bình thường trên mọi trục đường chính và các hầm chui.';
+  } else if (totalRain >= 25 || maxRain >= 15) {
+    aiSummary = `Hệ thống AI cảnh báo trong 24 giờ tới Hà Đông sẽ có mưa lớn dồn dập với tổng lượng mưa đạt khoảng ${totalRain} mm (xác suất mưa lên tới ${maxProb}%). Đỉnh mưa dự kiến xuất hiện vào khung giờ ${peakWindow}. Lượng mưa này vượt ngưỡng thoát nước tự nhiên của đô thị Hà Đông.`;
+    trafficAdvisory = 'CẢNH BÁO GIAO THÔNG: Nguy cơ ngập sâu 20–45cm tại các điểm đen (Hầm chui Nguyễn Trãi, Ba La, Xa La, cổng Viện 103). Khuyến nghị người dân sử dụng tuyến tránh an toàn, không cố vượt qua vùng ngập sâu bằng xe máy hay ô tô gầm thấp.';
+  } else {
+    aiSummary = `Hệ thống AI nhận định trong 24 giờ tới khu vực Hà Đông có mưa với tổng lượng tích lũy khoảng ${totalRain} mm, xác suất mưa đạt ${maxProb}%. Mưa rải rác với cường độ vừa phải, chưa đủ gây tê liệt diện rộng nhưng có thể ứ đọng tại một số điểm trũng.`;
+    trafficAdvisory = 'LƯU Ý LƯU THÔNG: Mặt đường trơn ướt và tầm nhìn hạn chế trong các đợt mưa rào. Hãy giảm tốc độ, giữ khoảng cách an toàn và chủ động mang áo mưa khi tham gia giao thông.';
+  }
+
+  return {
+    available: true,
+    will_rain: willRain,
+    total_rain_mm: totalRain,
+    max_prob_pct: maxProb,
+    intensity_label: intensityLabel,
+    status_title: statusTitle,
+    ai_summary: aiSummary,
+    peak_window: peakWindow,
+    periods,
+    traffic_advisory: trafficAdvisory,
+    flood_risk_level: floodRiskLevel
+  };
 }
 
 /**
@@ -424,9 +742,10 @@ export function getActionableSolutions(rainRate = 35) {
       icon: '🚗',
       color: '#dc2626',
       actions: [
-        'Hạn chế phương tiện đi vào Hầm chui Nguyễn Trãi - Khuất Duy Tiến và Ngã ba Ba La (độ sâu dự báo 30–45 cm).',
-        'Cư dân các chung cư tại KĐT Văn Quán, Xa La, Mộ Lao chủ động đưa ô tô ra khỏi tầng hầm thấp.',
-        'Sử dụng các tuyến tránh cao ráo: Trục đường Tô Hiệu, Cầu Trắng, đường đôi 24m KĐT Văn Phú.'
+        'Hạn chế phương tiện đi vào Hầm chui Nguyễn Trãi - Khuất Duy Tiến, ngã ba Ba La, và cổng KĐT Xa La khi mưa lớn (>30 mm/h).',
+        'Cư dân các chung cư tại KĐT Văn Quán, Xa La, Mộ Lao chủ động di chuyển ô tô ra khỏi tầng hầm thấp lên khu vực bãi nổi an toàn.',
+        'Sử dụng các tuyến tránh cao ráo theo AI khuyến nghị: Tuyến Cầu Trắng - Tô Hiệu, đường đôi 24m KĐT Văn Phú, trục Tố Hữu.',
+        'Theo dõi ứng dụng Hà Đông Flood Lab để cập nhật thời gian thực các điểm ngập trước khi xuất phát.'
       ]
     },
     {
@@ -435,9 +754,10 @@ export function getActionableSolutions(rainRate = 35) {
       icon: '🛟',
       color: '#ea580c',
       actions: [
-        'Kích hoạt 8/10 tổ máy Trạm bơm Yên Nghĩa (120 m³/s) để hạ thấp tối đa mực nước Kênh La Khê.',
-        'Trạm bơm Cầu Đơ vận hành liên tục 4 tổ máy tiêu nước nội thị Hà Đông ra sông Nhuệ.',
-        'Công nhân Xí nghiệp thoát nước số 8 túc trực tại 16 điểm ngập trọng yếu, mở nắp cống thu và vớt rác rào chắn.'
+        'Kích hoạt tối đa 10/10 tổ máy Trạm bơm Yên Nghĩa (công suất 120 m³/s) để hạ thấp tối đa mực nước Kênh La Khê xả ra Sông Đáy.',
+        'Trạm bơm Cầu Đơ và Đa Sỹ vận hành liên tục 4 tổ máy tiêu nước nội thị vùng lõi Hà Đông ra sông Nhuệ.',
+        'Công nhân Xí nghiệp thoát nước số 8 túc trực tại 16 điểm ngập trọng yếu, mở nắp cống thu có rào chắn bảo vệ và vớt rác rào chắn.',
+        'Hạ cống điều tiết các hồ điều hòa (Hồ Văn Quán, Hồ Đầm Khê, Hồ Mộ Lao) về mực nước chết trước 2–3 giờ để sẵn sàng trữ lũ.'
       ]
     },
     {
@@ -446,9 +766,22 @@ export function getActionableSolutions(rainRate = 35) {
       icon: '👮',
       color: '#2563eb',
       actions: [
-        'Đội CSGT số 7 và số 10 cắm chốt từ xa tại ngã tư Lê Trọng Tấn - Quang Trung và ngã tư Vạn Phúc để phân luồng xe tải, xe buýt.',
-        'Bố trí xe cứu hộ cẩu kéo chuyên dụng túc trực tại chân cầu vượt Ba La và đường Nguyễn Trãi sẵn sàng kéo xe chết máy.',
-        'Phát thanh bản tin cảnh báo ngập qua hệ thống loa truyền thanh thông minh các phường Phúc La, Mộ Lao, Dương Nội.'
+        'Đội CSGT số 7 và số 10 cắm chốt từ xa tại ngã tư Lê Trọng Tấn - Quang Trung, Vạn Phúc và Trần Phú để phân luồng xe máy và xe gầm thấp.',
+        'Bố trí xe cứu hộ cẩu kéo chuyên dụng túc trực 24/7 tại chân cầu vượt Ba La, Hầm chui Nguyễn Trãi sẵn sàng kéo xe chết máy.',
+        'Phát thanh bản tin cảnh báo ngập qua hệ thống loa truyền thanh thông minh các phường Phúc La, Mộ Lao, Dương Nội, Yên Nghĩa.',
+        'Lực lượng dân quân tự vệ và cứu hộ phường chuẩn bị xuồng cứu hộ và xe gầm cao hỗ trợ người già, học sinh qua các điểm ngập sâu.'
+      ]
+    },
+    {
+      category: 'Giải pháp công trình & Quy hoạch đô thị bền vững',
+      priority: 'Dài hạn',
+      icon: '🏗️',
+      color: '#059669',
+      actions: [
+        'Đẩy nhanh giải phóng mặt bằng cứng hóa đoạn kênh dẫn La Khê để phát huy tối đa 100% công suất Trạm bơm Yên Nghĩa.',
+        'Xây dựng bể ngầm điều tiết thông minh (Smart Underground Detention) tại công viên và bãi đỗ xe công cộng khu vực Ba La và Xa La.',
+        'Tăng diện tích bề mặt thấm nước: Thay thế vỉa hè bê tông đặc bằng gạch tự chèn thấm nước và phát triển vườn mưa (Rain Gardens) tại các KĐT mới.',
+        'Số hóa mạng lưới cống ngầm Hà Đông bằng cảm biến mực nước IoT truyền dữ liệu trực tiếp về trung tâm điều hành Smart City.'
       ]
     }
   ];
