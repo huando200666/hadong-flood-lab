@@ -5,6 +5,14 @@
   <meta name="theme-color" content="#123e35"><meta name="description" content="Không gian nghiên cứu ngập úng Hà Đông: bản đồ GIS, dự báo mưa và kịch bản mô phỏng.">
   <title>Hà Đông Flood Lab · Không gian theo dõi ngập úng</title>
   <link rel="icon" href="./favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://unpkg.com" crossorigin>
+  <link rel="preconnect" href="https://api.open-meteo.com" crossorigin>
+  <link rel="preconnect" href="https://tile.openstreetmap.org" crossorigin>
+  <link rel="dns-prefetch" href="https://unpkg.com">
+  <link rel="dns-prefetch" href="https://api.open-meteo.com">
+  <link rel="dns-prefetch" href="https://tile.openstreetmap.org">
+  <link rel="preload" href="./data/sites.geojson" as="fetch" crossorigin>
+  <link rel="preload" href="./data/gis-layers.geojson" as="fetch" crossorigin>
   <link rel="stylesheet" href="./style.css">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
   <script defer src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
@@ -49,8 +57,34 @@
         <div class="section-heading"><div><p class="eyebrow">01 / KHÁM PHÁ KHÔNG GIAN</p><h2 id="map-title">Bản đồ khu vực <span class="count-badge" id="map-count">—</span></h2></div><div class="button-row"><button id="share-view" class="button secondary small">↗ Chia sẻ bộ lọc</button><button id="locate-btn" class="button secondary small">⌖ Vị trí của tôi</button><button id="reset-map-btn" class="button secondary small">◎ Về trung tâm</button></div></div>
         <div class="map-workspace">
           <div class="map-panel">
-            <div class="map-toolbar" role="group" aria-label="Lớp bản đồ"><label class="layer-chip"><input type="checkbox" data-layer="sites" checked> Địa điểm</label><label class="layer-chip"><input type="checkbox" data-layer="water" checked> Sông & hồ</label><label class="layer-chip"><input type="checkbox" data-layer="roads"> Đường</label><label class="layer-chip"><input type="checkbox" data-layer="infrastructure"> Hạ tầng</label><label class="layer-chip"><input type="checkbox" data-layer="community" checked> Báo cáo</label></div>
-            <div class="map-stage"><div id="map" aria-label="Bản đồ tương tác Hà Đông"><div class="empty-state">Đang tải bản đồ…</div></div><div id="map-status" class="map-status" role="status">Bản đồ tham chiếu · Chưa phải dữ liệu ngập hiện tại</div></div>
+            <div class="map-toolbar" role="group" aria-label="Lớp bản đồ">
+              <label class="layer-chip"><input type="checkbox" data-layer="sites" checked> Địa điểm</label>
+              <label class="layer-chip"><input type="checkbox" data-layer="water" checked> Sông & hồ</label>
+              <label class="layer-chip"><input type="checkbox" data-layer="roads"> Đường</label>
+              <label class="layer-chip"><input type="checkbox" data-layer="infrastructure"> Hạ tầng</label>
+              <label class="layer-chip"><input type="checkbox" data-layer="community" checked> Báo cáo</label>
+              <label class="layer-chip"><input type="checkbox" data-layer="rain" checked> 🌧️ Kịch bản mưa</label>
+              <button id="ai-auto-toggle" class="button secondary small auto-live-btn active" type="button" aria-pressed="true">↻ Mưa: Theo dự báo</button>
+              <button id="alert-sound-toggle" aria-pressed="false" class="button secondary small sound-btn" type="button" title="Bật/Tắt âm cảnh báo">🔔 Bật âm</button>
+            </div>
+            <div class="map-stage">
+              <div id="map-alert-hud" class="map-alert-hud" role="region" aria-label="Kết quả kịch bản mô phỏng">
+                <div class="hud-top">
+                  <span class="hud-ai-tag"><i class="hud-dot"></i> MÔ PHỎNG</span>
+                  <span id="hud-alert-level" class="hud-level level-normal">ĐANG TẢI</span>
+                  <button type="button" id="hud-sound-btn" aria-pressed="false" class="hud-sound-btn" aria-label="Bật tắt âm cảnh báo" title="Bật/Tắt âm thanh cảnh báo">🔔</button>
+                </div>
+                <p id="auto-mode-status" class="hud-msg" role="status">Chờ dữ liệu mưa dự báo hợp lệ.</p>
+                <p id="hud-alert-msg" class="hud-msg">Đang tính toán kịch bản mưa…</p>
+                <div class="hud-metrics">
+                  <span id="hud-rain-val">🌧️ Mưa: <b>— mm/h</b></span>
+                  <span id="hud-risk-val">⚡ <b>— điểm nguy cơ</b></span>
+                  <button type="button" id="hud-focus-top" class="hud-action-link" hidden>Xem điểm ngập sâu ↗</button>
+                </div>
+              </div>
+              <div id="map" aria-label="Bản đồ tương tác Hà Đông"><div class="empty-state">Đang tải bản đồ…</div></div>
+              <div id="map-status" class="map-status" role="status">Bản đồ tham chiếu · Chưa phải dữ liệu ngập hiện tại</div>
+            </div>
             <div class="map-bottom"><span><i class="legend-dot" style="--dot:#10b981"></i>Thấp</span><span><i class="legend-dot" style="--dot:#f59e0b"></i>Trung bình</span><span><i class="legend-dot" style="--dot:#ea580c"></i>Cao</span><span><i class="legend-dot" style="--dot:#dc2626"></i>Rất cao</span><span class="legend-note">Nguy cơ theo kịch bản</span></div>
           </div>
           <aside class="location-panel" aria-label="Tra cứu địa điểm">

@@ -50,3 +50,12 @@ export function mergeReportBackup(existing, payload) {
   }
   return {reports:[...added,...existing],added:added.length};
 }
+
+export function scenarioAlert(forecast, rain) {
+  const high = forecast.predictions.filter(site => ['high', 'very_high'].includes(site.risk_level));
+  const veryHigh = high.filter(site => site.risk_level === 'very_high');
+  const level = veryHigh.length >= 2 || high.length >= 6 || rain >= 50 ? 'danger'
+    : high.length >= 3 || rain >= 30 ? 'warning' : high.length || rain >= 15 ? 'advisory' : 'normal';
+  return {level, affected_count: high.length,
+    banner: 'Kịch bản ' + rain + ' mm/h · ' + forecast.horizon + ': ' + high.length + ' điểm nguy cơ cao, trong đó ' + veryHigh.length + ' điểm rất cao. Mô phỏng chưa kiểm định.'};
+}

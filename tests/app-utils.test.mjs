@@ -29,3 +29,14 @@ test('missing precipitation is not silently summed as zero',()=>{
  assert.equal(summarizeRain([{rain:1},{rain:2.5}]).total,3.5);
  assert.equal(summarizeRain([{rain:-1}]).complete,false);
 });
+
+
+test('scenario alerts use the selected forecast without claiming live observations', async () => {
+  const {scenarioAlert} = await import('../public/app-utils.js');
+  const dry=scenarioAlert({horizon:'+30m',predictions:[{risk_level:'low'}]},0);
+  assert.equal(dry.level,'normal');assert.equal(dry.affected_count,0);
+  assert.match(dry.banner,/Mô phỏng chưa kiểm định/);
+  const wet=scenarioAlert({horizon:'+3h',predictions:[{risk_level:'high'},{risk_level:'very_high'},{risk_level:'very_high'},{risk_level:'medium'}]},35);
+  assert.equal(wet.level,'danger');assert.equal(wet.affected_count,3);
+  assert.match(wet.banner,/\+3h/);
+});

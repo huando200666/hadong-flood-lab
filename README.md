@@ -47,18 +47,26 @@ Nguồn được ghi trong `data/sources.json`; giao diện ghi công OpenStreet
 `public/` là nguồn giao diện chính. Sau khi sửa tài nguyên tĩnh, đồng bộ các bản sao ở thư mục gốc:
 
 ```powershell
-npm run sync:static
-npm test
-npm run test:browser
+node scripts/sync-static.mjs
+node --test tests/*.test.mjs
+node scripts/verify-browser.mjs
 ```
 
 `npm test` chạy kiểm tra logic và API. `npm run test:browser` cần **Node.js 22 trở lên** có `WebSocket` toàn cục và Chrome/Edge; chạy headless bằng hồ sơ tạm riêng, dọn hồ sơ sau kiểm thử và lưu kết quả hình ảnh trong `artifacts/`. Script kiểm tra tương tác, giao diện máy tính/điện thoại và tình huống mất nguồn dữ liệu; thời tiết dùng fixture kiểm thử. Nếu không tự tìm thấy trình duyệt, đặt đường dẫn trước khi chạy:
 
 ```powershell
 $env:CHROME_PATH = 'C:\Program Files\Google\Chrome\Application\chrome.exe'
-npm run test:browser
+node scripts/verify-browser.mjs
 ```
 
 Các tệp chính: `public/` chứa giao diện và logic; `server.mjs` phục vụ web/API; `data/` chứa dữ liệu tham chiếu và nguồn; `scripts/` chứa công cụ vận hành; `tests/` chứa kiểm tra; `ml/README.md` hướng dẫn huấn luyện khi có dữ liệu ngập được xác minh.
 
 Tải dữ liệu nghiên cứu bằng `node scripts/download-data.mjs`. Để phát triển thành mô hình dự báo, cần xác minh phạm vi nghiên cứu, khảo sát địa hình/thoát nước, thu thập nhiều sự kiện ngập và không ngập độc lập, rồi đánh giá theo thời gian và vị trí trước khi công bố độ chính xác hoặc ngưỡng cảnh báo.
+
+### Đồng bộ kịch bản với dự báo
+
+Nút **Mưa: Theo dự báo** nạp lượng mưa của giờ dự báo gần nhất làm đầu vào kịch bản. Kéo thanh mưa hoặc chọn giờ mưa lớn nhất sẽ chuyển sang thủ công để không ghi đè lựa chọn khi cập nhật. Chế độ được giữ trong liên kết (auto=1 hoặc auto=0); liên kết cũ chỉ có rain vẫn mở ở chế độ thủ công. Khi nguồn thời tiết lỗi hoặc thiếu giờ mưa, ứng dụng giữ nguyên kịch bản và hiển thị trạng thái chờ/lỗi.
+
+Bảng trên bản đồ dùng cùng lượng mưa và khoảng thời gian với kịch bản. Vùng tô màu chỉ minh họa kịch bản, không phải radar mưa hay số đo trạm. Âm thanh chỉ phát khi chuyển sang mức cảnh báo khác ở mức cao, có thể bật/tắt bằng hai nút đồng bộ.
+
+Nếu PowerShell chặn npm.ps1, dùng các lệnh node ở trên hoặc npm.cmd test, không cần thay đổi chính sách PowerShell.
